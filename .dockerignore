@@ -1,0 +1,17 @@
+myvenv/
+__pycache__/
+.pytest_cache/
+logs/
+datasets/
+tests/
+
+.git/
+.gitignore
+
+*.pyc
+*.pyo
+*.pyd
+
+.ipynb_checkpoints/
+
+.env
