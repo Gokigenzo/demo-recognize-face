@@ -7,3 +7,4 @@ logs/*.csv
 logs/*.json
 .pytest_cache/
 ~/.insightface/
+datasets/sample_bundle.pkl
