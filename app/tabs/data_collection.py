@@ -80,15 +80,5 @@ def render(show_hero: bool = True) -> None:
         st.success(f"Stored **{pose}** pose for **{name}** ✓")
         st.balloons()
 
-    # Show current dataset snapshot.
-    db = storage.load_embeddings_db()
-    users = storage.load_users()
-    if db:
-        st.markdown("#### 📚 Current dataset")
-        rows = [
-            {"User": users.get(uid, {}).get("name", uid), "Samples": len(embs)}
-            for uid, embs in db.items()
-        ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
-
     ui.lesson("Machine Learning learns from data.")
+

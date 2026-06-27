@@ -1,18 +1,6 @@
-# TODO – UI improvements + Tab 5 (Monitoring & Feedback)
-
-## Plan summary
-- Add dedicated Tab 5: Monitoring & Feedback Loop.
-- Standardize per-tab “story” layout for clearer educational guidance.
-- Improve each existing tab’s structure: objective/inputs/outputs/interpretation/failures.
-
-## Steps
-1. Create new file `app/tabs/monitoring_feedback.py` implementing Tab 5 UI.
-2. Update `main.py` to add Tab 5 mapping and sidebar entry. ✅
-3. Extend `ml/storage.py` UI-read helpers only if needed (not expected for minimal implementation).
-4. Smoke test:
-
-   - `streamlit run main.py`
-   - Ensure Tab 5 loads; feedback saving works without crashing.
-   - Ensure existing 4 tabs still render.
-
-
+- [x] Inspect Tab 1 UI flow (data_processing.py) and remove the “Feature Extraction & Clusters” tab.
+- [x] Add a background auto-process step that runs after data is collected/registered (triggered on successful "Register this pose").
+- [x] Implement the background process to refresh any derived artifacts (e.g., embeddings/cluster data cache) without requiring the user to open a separate tab.
+- [x] Create a table in Tab 1 to show all collected objects/samples in the dataset (users + poses/samples metadata).
+- [x] Wire the table refresh so it updates after background processing.
+- [x] Run tests / basic smoke run to ensure Streamlit app still starts.

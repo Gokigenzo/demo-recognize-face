@@ -103,10 +103,10 @@ def render() -> None:
     with c1:
         _confusion_heatmap(result)
     with c2:
-        st.markdown("**Accuracy by case**")
-        case_rows = [{"Case": c, "Accuracy": f"{v:.0%}"} for c, v in result.per_case.items()]
-        st.dataframe(case_rows, use_container_width=True, hide_index=True)
+        # Removed "Accuracy by case" table per request.
+        pass
 
     _tradeoff_curve(samples)
 
     ui.lesson("Sometimes predicting Unknown is better than guessing.")
+
