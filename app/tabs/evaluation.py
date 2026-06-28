@@ -15,7 +15,7 @@ import streamlit as st
 
 from app import ui_helpers as ui
 from ml import config, storage
-from ml.evaluator import EvalSample, evaluate, threshold_sweep
+from ml.evaluator import EvalSample, evaluate, threshold_sweep, evaluate_classifier
 
 CASES = ["Normal", "Glasses", "Mask", "Side Face", "Dark Lighting"]
 # Heavier perturbation == harder case (mask/side face degrade embeddings most).
@@ -93,11 +93,18 @@ def render() -> None:
     samples = _build_test_set()
     result = evaluate(samples, threshold)
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Accuracy", f"{result.accuracy:.0%}")
+    clf_bundle = storage.load_classifier()
+    clf_test_acc = evaluate_classifier(samples, clf_bundle, threshold)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Accuracy (Similarity)", f"{result.accuracy:.0%}")
     m2.metric("Precision", f"{result.precision:.0%}")
     m3.metric("Recall", f"{result.recall:.0%}")
     m4.metric("F1", f"{result.f1:.0%}")
+    if clf_test_acc is not None:
+        m5.metric("Accuracy (Classifier)", f"{clf_test_acc:.0%}")
+    else:
+        m5.metric("Accuracy (Classifier)", "n/a", help="Train a model in Tab 2 first")
 
     c1, c2 = st.columns(2)
     with c1:

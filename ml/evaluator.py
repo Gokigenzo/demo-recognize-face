@@ -116,3 +116,51 @@ def threshold_sweep(
     if thresholds is None:
         thresholds = [round(t, 2) for t in np.linspace(0.1, 0.9, 17)]
     return [evaluate(samples, t) for t in thresholds]
+
+
+def evaluate_classifier(
+    samples: List[EvalSample],
+    clf_bundle: Optional[dict],
+    threshold: float = 0.5,
+) -> Optional[float]:
+    """Evaluate the trained classifier on evaluation samples.
+
+    If the max probability of the predicted class is less than the threshold,
+    we classify the sample as 'Unknown' (None).
+    """
+    if clf_bundle is None or not samples:
+        return None
+
+    clf = clf_bundle["classifier"]
+    classes = clf_bundle["classes"]  # List of user_ids
+
+    correct = 0
+    for s in samples:
+        actual_id = s.true_user_id  # None or user_id
+        vec = s.embedding.reshape(1, -1)
+
+        if hasattr(clf, "predict_proba"):
+            try:
+                proba = clf.predict_proba(vec)[0]
+                pred_idx = np.argmax(proba)
+                pred_prob = proba[pred_idx]
+
+                # If the probability is less than the threshold, classify as Unknown
+                pred_id = classes[pred_idx] if pred_prob >= threshold else None
+            except Exception:
+                try:
+                    pred_idx = int(clf.predict(vec)[0])
+                    pred_id = classes[pred_idx]
+                except Exception:
+                    pred_id = None
+        else:
+            try:
+                pred_idx = int(clf.predict(vec)[0])
+                pred_id = classes[pred_idx]
+            except Exception:
+                pred_id = None
+
+        if pred_id == actual_id:
+            correct += 1
+
+    return correct / len(samples)

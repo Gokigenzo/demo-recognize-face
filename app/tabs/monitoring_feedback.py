@@ -29,6 +29,10 @@ from ml.face_detector import detect_largest_face, draw_detection
 from ml.feedback_engine import improvement_summary, record_correction
 
 
+def _slugify(name: str) -> str:
+    return "".join(c for c in name.lower().strip().replace(" ", "_") if c.isalnum() or c == "_")
+
+
 def _capture_image_for_feedback() -> Optional[np.ndarray]:
     """Return a BGR image captured/uploaded by the user, or None."""
     mode = st.radio(
@@ -55,16 +59,7 @@ def _capture_image_for_feedback() -> Optional[np.ndarray]:
 def render() -> None:
     ui.hero("5 · Monitoring & Feedback", "Live systems learn from mistakes." )
 
-    # Larger instructional text (Streamlit default can be too small on projector).
-    st.markdown(
-        """
-        <style>
-          div.stMarkdown p { font-size: 18px; }
-          div.stMarkdown li { font-size: 18px; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    pass
 
     ui.pipeline([
 
@@ -142,6 +137,13 @@ def render() -> None:
         format_func=lambda uid: choice_names.get(uid, uid),
     )
 
+    enroll_new = False
+    new_name = ""
+    if correct_user_id == "__unknown__":
+        enroll_new = st.checkbox("➕ Enroll as a new person", value=True, help="Add this face as a new person in the database")
+        if enroll_new:
+            new_name = st.text_input("👤 Person Name", placeholder="e.g. Marie Curie")
+
     note = st.text_area(
         "Optional note (what went wrong / context)",
         placeholder="e.g., new hairstyle, different lighting, wrong threshold…",
@@ -149,18 +151,34 @@ def render() -> None:
 
     if st.button("💾 Save correction & add embedding", type="primary", use_container_width=True):
         if correct_user_id == "__unknown__":
-            st.info("Marked as Unknown — no embedding added to a specific identity.")
-            storage.append_feedback(
-                {
-                    "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-                    "predicted": result.name,
-                    "corrected_to": "Unknown",
-                    "correct_user_id": None,
-                    "note": note,
-                }
-            )
-            st.success("Saved feedback entry.")
-            st.rerun()
+            if enroll_new:
+                if not new_name.strip():
+                    st.error("Please enter a name for the new person.")
+                    return
+                new_user_id = _slugify(new_name)
+                entry = record_correction(
+                    embedding=emb,
+                    correct_user_id=new_user_id,
+                    correct_name=new_name.strip(),
+                    predicted_name=result.name,
+                    note=note,
+                )
+                st.success(f"Stored feedback & enrolled **{new_name.strip()}** with a new embedding! ✓")
+                st.balloons()
+                st.rerun()
+            else:
+                st.info("Marked as Unknown — no embedding added to a specific identity.")
+                storage.append_feedback(
+                    {
+                        "timestamp": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                        "predicted": result.name,
+                        "corrected_to": "Unknown",
+                        "correct_user_id": None,
+                        "note": note,
+                    }
+                )
+                st.success("Saved feedback entry.")
+                st.rerun()
 
         correct_name = users.get(correct_user_id, {}).get("name", correct_user_id)
         entry = record_correction(

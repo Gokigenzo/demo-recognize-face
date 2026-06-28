@@ -93,3 +93,40 @@ def test_pca_projection_shape():
 
 def test_pca_empty_input():
     assert pca_project([], 2).shape == (0, 2)
+
+
+# ---------------------------------------------------------------------------
+# Evaluator - Classifier Accuracy
+# ---------------------------------------------------------------------------
+def test_evaluate_classifier():
+    from ml.evaluator import EvalSample, evaluate_classifier
+    
+    class DummyClassifier:
+        def __init__(self, classes):
+            self.classes = classes
+        def predict_proba(self, X):
+            proba = np.ones((len(X), len(self.classes))) * 0.1
+            proba[:, 0] = 0.8
+            return proba
+
+    classes = ["user_1", "user_2"]
+    clf = DummyClassifier(classes)
+    clf_bundle = {
+        "classifier": clf,
+        "classes": classes,
+    }
+    
+    samples = [
+        EvalSample(np.zeros(config.EMBEDDING_DIM, dtype=np.float32), "user_1", "case1")
+    ]
+    
+    # Threshold 0.5: predicted user_1 (0.8 >= 0.5) vs actual user_1 (match, 100%)
+    acc = evaluate_classifier(samples, clf_bundle, threshold=0.5)
+    assert acc == 1.0
+
+    # Threshold 0.9: predicted Unknown (0.8 < 0.9) vs actual user_1 (mismatch, 0%)
+    acc = evaluate_classifier(samples, clf_bundle, threshold=0.9)
+    assert acc == 0.0
+
+    # None bundle returns None
+    assert evaluate_classifier(samples, None, threshold=0.5) is None

@@ -1,3 +1,19 @@
+---
+title: Demo Face Recognition
+emoji: 👁️
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
+# Demo Face Recognition
+
+Ứng dụng demo nhận diện khuôn mặt sử dụng Streamlit + InsightFace.
+
+
+
 # ML Lifecycle Demo (Face-Recognition Attendance)
 
 Streamlit app that walks through an end-to-end machine-learning lifecycle:
