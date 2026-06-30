@@ -113,70 +113,90 @@ def render() -> None:
         # Placeholders for dynamic status & charts
         status_placeholder = st.empty()
         chart_placeholder = st.empty()
-        
+
         live_epochs = []
         live_loss = []
         live_train_acc = []
         live_val_acc = []
-        
+
         def training_callback(epoch, total_epochs, loss, train_acc, val_acc):
             live_epochs.append(epoch)
             live_loss.append(loss)
             live_train_acc.append(train_acc)
             live_val_acc.append(val_acc)
-            
+
             status_placeholder.markdown(
                 f"**Training progress:** Epoch {epoch}/{total_epochs} — "
                 f"Loss: `{loss:.4f}` | Train Acc: `{train_acc:.0%}` | Val Acc: `{val_acc:.0%}`"
             )
-            
-            # Draw the curves in real time
+
+            # Only MLP should display learning curves.
+            if kind != "MLP":
+                return
+
             from plotly.subplots import make_subplots
+
             fig = make_subplots(
-                rows=1, cols=2,
+                rows=1,
+                cols=2,
                 subplot_titles=("Training Loss Curve", "Accuracy Progression"),
-                horizontal_spacing=0.15
+                horizontal_spacing=0.15,
             )
             fig.add_trace(
                 go.Scatter(
-                    x=live_epochs, y=live_loss,
-                    mode="lines+markers", name="Loss",
+                    x=live_epochs,
+                    y=live_loss,
+                    mode="lines+markers",
+                    name="Loss",
                     line=dict(color="#EA4C89", width=2),
-                    marker=dict(size=4)
+                    marker=dict(size=4),
                 ),
-                row=1, col=1
+                row=1,
+                col=1,
             )
             fig.add_trace(
                 go.Scatter(
-                    x=live_epochs, y=live_train_acc,
-                    mode="lines+markers", name="Train Acc",
+                    x=live_epochs,
+                    y=live_train_acc,
+                    mode="lines+markers",
+                    name="Train Acc",
                     line=dict(color="#4285F4", width=2),
-                    marker=dict(size=4)
+                    marker=dict(size=4),
                 ),
-                row=1, col=2
+                row=1,
+                col=2,
             )
             fig.add_trace(
                 go.Scatter(
-                    x=live_epochs, y=live_val_acc,
-                    mode="lines+markers", name="Val Acc",
+                    x=live_epochs,
+                    y=live_val_acc,
+                    mode="lines+markers",
+                    name="Val Acc",
                     line=dict(color="#00BFA5", width=2, dash="dash"),
-                    marker=dict(size=4)
+                    marker=dict(size=4),
                 ),
-                row=1, col=2
+                row=1,
+                col=2,
             )
             fig.update_layout(
                 height=320,
                 margin=dict(t=50, b=30, l=10, r=10),
-                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1
+                ),
             )
             fig.update_xaxes(title_text="Epoch", row=1, col=1)
             fig.update_xaxes(title_text="Epoch", row=1, col=2)
             fig.update_yaxes(title_text="Loss", row=1, col=1)
-            fig.update_yaxes(title_text="Accuracy", row=1, col=2, range=[0, 1.05])
-            
+            fig.update_yaxes(
+                title_text="Accuracy", row=1, col=2, range=[0, 1.05]
+            )
+
             chart_placeholder.plotly_chart(fig, use_container_width=True)
             import time
+
             time.sleep(0.04)
+
 
         with st.spinner(f"Training {kind} on collected embeddings…"):
             try:
@@ -215,8 +235,9 @@ def render() -> None:
             "a classic sign of **overfitting** to too little data."
         )
 
-    # Plot training curves if available
-    if model.epochs_loss:
+    # Plot training curves ONLY for MLP (SVM/KNN are non-iterative in this demo).
+    if model.kind == "MLP" and model.epochs_loss:
+
         st.markdown("### 📈 Iterative Training Dynamics (Learning Curves)")
         from plotly.subplots import make_subplots
         epochs = list(range(1, len(model.epochs_loss) + 1))
