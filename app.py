@@ -12,6 +12,7 @@ import streamlit as st
 
 from app import ui_helpers as ui
 from app.tabs import (
+    application,
     data_processing,
     model_building,
     evaluation,
@@ -37,6 +38,7 @@ TABS = {
     "3 · Evaluation": evaluation.render,
     "4 · Deployment": deployment.render,
     "5 · Monitoring & Feedback": monitoring_feedback.render,
+    "6 · Application": application.render,
 }
 
 

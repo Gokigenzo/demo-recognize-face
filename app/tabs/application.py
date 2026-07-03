@@ -1,0 +1,319 @@
+"""Application page for the realtime attendance system.
+
+This page demonstrates how a trained face recognition model is used in
+production: live webcam inference, checklist-driven attendance tracking,
+confidence-based identity confirmation, and export of final attendance data.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from typing import Dict, List, Optional
+
+import streamlit as st
+
+from app import ui_helpers as ui
+from ml import config, storage
+from ml.attendance_session import AttendanceSession, SessionStatistics, PredictionResult
+from ml.realtime_engine import RealtimeAttendanceEngine
+
+def _load_attendance_session() -> AttendanceSession:
+    users = storage.load_users()
+    if not users:
+        raise RuntimeError("No registered students available. Enroll people in the Data Collection tab first.")
+    return AttendanceSession(users=users)
+
+
+def _session_needs_refresh(session: AttendanceSession) -> bool:
+    current_users = storage.load_users()
+    if not current_users:
+        return True
+    return set(session.users.keys()) != set(current_users.keys())
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _render_checklist(session: AttendanceSession) -> None:
+    rows = []
+    for student in session.student_checklist():
+        is_present = student["present"]
+        checkbox = "☑" if is_present else "☐"
+        name = student["name"]
+        conf = student["confidence"]
+        if is_present:
+            rows.append(
+                f'<div style="padding: 6px 0; font-size: 14px; color: #111; line-height: 1.4;">'
+                f'<strong>{checkbox} {name}</strong> <span style="color: #4b5563;">(Present — {conf * 100:.1f}%)</span></div>'
+            )
+        else:
+            rows.append(
+                f'<div style="padding: 6px 0; font-size: 14px; color: #111; line-height: 1.4;">{checkbox} {name}</div>'
+            )
+
+    html = (
+        '<div style="max-height: 440px; overflow-y: auto; padding: 12px; '
+        'border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">'
+        + "".join(rows) + "</div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _render_dashboard(stats: Dict[str, object]) -> None:
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Total Students", stats["total_students"])
+    c2.metric("Present", stats["present"])
+    c3.metric("Absent", stats["absent"])
+    c4.metric("Attendance Rate", stats["attendance_rate"])
+    c5.metric("Current FPS", stats["current_fps"])
+
+    c6, c7, c8, c9, c10 = st.columns(5)
+    c6.metric("Unknown Faces", stats["unknown_faces"])
+    c7.metric("Duplicate Recognitions", stats["duplicate_recognitions"])
+    c8.metric("Average Confidence", stats["average_confidence"])
+    c9.metric("Avg Recognition Time", stats["average_recognition_time"])
+    c10.metric("Elapsed Session", stats["elapsed_session_time"])
+
+
+def render() -> None:
+    ui.hero("6 · Application", "Real-time attendance as a production-ready application page.")
+    ui.pipeline(["Webcam", "Detection", "Embedding", "Inference", "Attendance"])
+
+    if not storage.load_embeddings_db():
+        st.info("No enrolled identities yet — register people in Tab 1 first.")
+        ui.lesson("A trained model and enrolled students are required for the Application page.")
+        return
+
+    if storage.load_classifier() is None:
+        st.warning("No trained classifier found. Train a model in the Model Building tab before using the Application page.")
+        ui.lesson("Application only performs inference; it does not retrain models.")
+        return
+
+    # Sidebar parameters
+    capture_mode = st.sidebar.radio(
+        "Capture mode",
+        ["Photo capture", "Server webcam (continuous)", "Browser fallback"],
+        index=0,
+        key="app_capture_mode",
+        help="Photo capture is the recommended path for low-quality cameras. It processes one captured image and marks attendance from that shot.",
+    )
+    threshold = st.sidebar.slider(
+        "Similarity Threshold",
+        0.30,
+        0.90,
+        config.DEFAULT_SIMILARITY_THRESHOLD,
+        0.05,
+        key="app_threshold",
+    )
+    confirmation_frames = st.sidebar.slider(
+        "Confirmation frames",
+        1,
+        10,
+        5,
+        1,
+        key="app_confirmation_frames",
+    )
+
+    # Initialize Session
+    if "attendance_session" not in st.session_state:
+        try:
+            st.session_state.attendance_session = _load_attendance_session()
+        except RuntimeError as exc:
+            st.error(str(exc))
+            return
+
+    session: AttendanceSession = st.session_state.attendance_session
+    if _session_needs_refresh(session):
+        session = _load_attendance_session()
+        st.session_state.attendance_session = session
+        st.session_state.engine = None
+        st.session_state.app_running = False
+        st.session_state.camera_opened = False
+
+    session.confirmation_frames = confirmation_frames
+
+    # Initialize Engine
+    if "engine" not in st.session_state or st.session_state.engine is None:
+        try:
+            engine = RealtimeAttendanceEngine(session=session, threshold=threshold)
+            engine.load_classifier()
+            st.session_state.engine = engine
+            st.session_state.app_running = False
+            st.session_state.camera_opened = False
+        except Exception as exc:
+            LOGGER.exception("Failed to initialize realtime attendance engine.")
+            st.error(f"Unable to load the model: {exc}")
+            return
+
+    engine: RealtimeAttendanceEngine = st.session_state.engine
+    engine.set_threshold(threshold)
+    camera_opened = st.session_state.get("camera_opened", False)
+
+    # UI Grid Setup
+    dashboard_placeholder = st.empty()
+    st.markdown("---")
+
+    cols = st.columns([2, 1])
+    with cols[0]:
+        st.markdown("### Camera")
+        camera_placeholder = st.empty()
+        camera_control_placeholder = st.empty()
+        camera_notice_placeholder = st.empty()
+
+    with cols[1]:
+        st.markdown("### Student Attendance Checklist")
+        checklist_placeholder = st.empty()
+
+        st.markdown("### Controls")
+        if capture_mode == "Server webcam (continuous)":
+            btn_start, btn_stop = st.columns(2)
+            with btn_start:
+                if st.button("Start Camera", type="primary", use_container_width=True):
+                    try:
+                        engine.open_camera()
+                        st.session_state.camera_opened = True
+                        st.session_state.app_running = True
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Unable to open webcam (camera index 0): {exc}")
+            with btn_stop:
+                if st.button("Stop Camera", type="secondary", use_container_width=True):
+                    st.session_state.app_running = False
+                    st.session_state.camera_opened = False
+                    engine.stop()
+                    st.rerun()
+        else:
+            st.info("Photo capture mode is active.")
+
+        if st.button("Reset Attendance", type="secondary", use_container_width=True):
+            session.reset()
+            st.session_state.app_running = False
+            st.session_state.camera_opened = False
+            engine.stop()
+            st.rerun()
+
+        csv_data = session.export_csv()
+        st.download_button(
+            label="Download attendance.csv",
+            data=csv_data,
+            file_name="attendance.csv",
+            mime="text/csv",
+            key="download_attendance",
+            use_container_width=True,
+        )
+
+    # Render Dashboard & Checklist Placeholders
+    stats_helper = SessionStatistics(session)
+
+    sound_placeholder = st.empty()
+    last_records_count = len(session.records)
+    last_ui_refresh = 0.0
+    last_dashboard_state = None
+    last_checklist_state = None
+
+    # Run Loop or Static Render
+    if capture_mode == "Server webcam (continuous)" and st.session_state.get("app_running", False) and camera_opened:
+        while st.session_state.get("app_running", False):
+            try:
+                frame = engine.capture_frame()
+            except Exception as exc:
+                st.error(f"Error capturing frame: {exc}")
+                st.session_state.app_running = False
+                st.session_state.camera_opened = False
+                engine.stop()
+                st.rerun()
+                break
+
+            if frame is None:
+                time.sleep(0.001)
+                continue
+
+            if not engine.should_process_frame():
+                time.sleep(0.001)
+                continue
+
+            annotated, predictions, annotations = engine.infer_frame(frame)
+            camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
+
+            now = time.time()
+            should_refresh_ui = (now - last_ui_refresh) >= config.REALTIME_UI_REFRESH_SECONDS
+            if should_refresh_ui:
+                stats = stats_helper.get_stats(engine.fps())
+                dashboard_state = stats
+                checklist_state = tuple((s["name"], s["present"], s["confidence"]) for s in session.student_checklist())
+                if dashboard_state != last_dashboard_state:
+                    with dashboard_placeholder.container():
+                        _render_dashboard(stats)
+                    last_dashboard_state = dashboard_state
+                if checklist_state != last_checklist_state:
+                    with checklist_placeholder.container():
+                        _render_checklist(session)
+                    last_checklist_state = checklist_state
+                if len(session.records) > last_records_count:
+                    new_record = session.records[-1]
+                    st.toast(f"✓ {new_record.name} marked as Present", icon="✅")
+                    sound_placeholder.markdown(
+                        f'<audio autoplay src="https://assets.mixkit.co/active_storage/sfx/2869/2869-200.wav" style="display:none;"></audio>',
+                        unsafe_allow_html=True
+                    )
+                    last_records_count = len(session.records)
+            else:
+                sound_placeholder.empty()
+
+            time.sleep(0.001)
+    else:
+        # Static render (Camera stopped or browser mode)
+        stats = stats_helper.get_stats(engine.fps() if camera_opened else 0.0)
+        with dashboard_placeholder.container():
+            _render_dashboard(stats)
+
+        with checklist_placeholder.container():
+            _render_checklist(session)
+
+        if capture_mode == "Photo capture":
+            photo = camera_control_placeholder.camera_input("Capture a class photo", key="app_photo_cam")
+            if photo is not None:
+                frame = ui.file_to_bgr(photo)
+                annotated, predictions, annotations = engine.process_photo(frame)
+                camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
+
+                stats = stats_helper.get_stats(engine.fps())
+                with dashboard_placeholder.container():
+                    _render_dashboard(stats)
+                with checklist_placeholder.container():
+                    _render_checklist(session)
+
+                if len(session.records) > last_records_count:
+                    new_record = session.records[-1]
+                    st.toast(f"✓ {new_record.name} marked as Present", icon="✅")
+                    sound_placeholder.markdown(
+                        f'<audio autoplay src="https://assets.mixkit.co/active_storage/sfx/2869/2869-200.wav" style="display:none;"></audio>',
+                        unsafe_allow_html=True
+                    )
+                    last_records_count = len(session.records)
+            camera_notice_placeholder.info("Take a photo to detect and mark attendance from that image.")
+        elif capture_mode == "Browser fallback":
+            photo = camera_control_placeholder.camera_input("Browser camera capture", key="app_browser_cam")
+            if photo is not None:
+                frame = ui.file_to_bgr(photo)
+                annotated, predictions, annotations = engine.process_photo(frame)
+                camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
+
+                stats = stats_helper.get_stats(engine.fps())
+                with dashboard_placeholder.container():
+                    _render_dashboard(stats)
+                with checklist_placeholder.container():
+                    _render_checklist(session)
+
+                if len(session.records) > last_records_count:
+                    new_record = session.records[-1]
+                    st.toast(f"✓ {new_record.name} marked as Present", icon="✅")
+                    sound_placeholder.markdown(
+                        f'<audio autoplay src="https://assets.mixkit.co/active_storage/sfx/2869/2869-200.wav" style="display:none;"></audio>',
+                        unsafe_allow_html=True
+                    )
+                    last_records_count = len(session.records)
+            camera_notice_placeholder.info("Use the browser camera capture button above to take a photo.")
+        else:
+            camera_notice_placeholder.info("Camera stopped. Press Start Camera to begin inference.")
+
+    ui.lesson("This page demonstrates production-style realtime inference without retraining.")

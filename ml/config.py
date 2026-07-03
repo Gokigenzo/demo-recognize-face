@@ -30,6 +30,13 @@ MONITORING_LOG_PATH = os.path.join(LOGS_DIR, "monitoring.json")
 EMBEDDING_DIM = 512                 # InsightFace buffalo_l output dimension
 FACE_CROP_SIZE = (112, 112)         # standard ArcFace input size
 DET_SIZE = (640, 640)               # InsightFace detector input size
+REALTIME_TARGET_FPS = 5.0           # Cap live recognition to keep the UI responsive
+REALTIME_CAMERA_WIDTH = 640         # Lower than full HD to keep latency low on CPU
+REALTIME_CAMERA_HEIGHT = 480
+REALTIME_CAMERA_FPS = 15            # Conservative webcam FPS for smoother live preview
+REALTIME_DETECTION_INTERVAL = 2     # Run face detection every N recognition cycles
+REALTIME_RESIZE_WIDTH = 640        # Downscale large frames before detection
+REALTIME_UI_REFRESH_SECONDS = 0.25 # Limit dashboard/checklist refresh rate
 
 # Cosine-similarity threshold above which a face is accepted as a known
 # identity. Tunable live via the Evaluation tab slider.
