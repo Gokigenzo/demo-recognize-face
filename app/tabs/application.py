@@ -178,7 +178,8 @@ def render() -> None:
             st.caption("⚠️ Webcam streaming requires a Secure Context (localhost or HTTPS).")
             # Register the Starlette WebSocket route and active session
             from app.tabs.live_camera_server import register_starlette_route, register_session
-            register_starlette_route()
+            ws_status = register_starlette_route()
+            st.caption(f"🔧 WebSocket server: **{ws_status}**")
             register_session(session_id, session, engine)
             
             # Render the browser camera widget

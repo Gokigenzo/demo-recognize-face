@@ -139,37 +139,50 @@ async def livecam_websocket_endpoint(websocket: WebSocket) -> None:
         LOGGER.info("LiveCam WebSocket connection closed/terminated.")
 
 
-def register_starlette_route() -> None:
-    """Finds the active Starlette Server in memory and registers the /livecamws WebSocket route."""
-    from streamlit.web.server.server import Server
-    
+def register_starlette_route() -> str:
+    """Finds the active Starlette Server in memory and registers the /livecamws WebSocket route.
+
+    Returns a status string.
+    """
     server = None
-    # Traverse active objects in garbage collector to retrieve the running server instance
+    # Traverse active objects in garbage collector to retrieve the running server instance.
+    # We match by class name as a string to prevent failures due to class reload discrepancies.
     for obj in gc.get_objects():
-        if isinstance(obj, Server):
+        if type(obj).__name__ == "Server" and hasattr(obj, "_starlette_server"):
             server = obj
             break
             
     if server is None:
         LOGGER.warning("Streamlit Server instance not found in memory.")
-        return
+        return "Streamlit Server instance not found in memory"
         
     if not hasattr(server, "_starlette_server") or server._starlette_server is None:
         LOGGER.warning("Starlette server wrapper is not initialized on Server.")
-        return
+        return "Starlette server wrapper is not initialized"
         
     starlette_server = server._starlette_server
     if not hasattr(starlette_server, "_server") or starlette_server._server is None:
         LOGGER.warning("Uvicorn server is not started on UvicornServer.")
-        return
+        return "Uvicorn server is not started"
         
     # Retrieve the Starlette Application instance
-    app = starlette_server._server.config.app
+    try:
+        app = starlette_server._server.config.app
+    except Exception as exc:
+        LOGGER.exception("Failed to get Starlette app instance:")
+        return f"Failed to get Starlette app: {exc}"
     
     # Register the route if not already in routing table
-    has_route = any(getattr(route, "path", None) == "/livecamws" for route in app.routes)
-    if not has_route:
-        from starlette.routing import WebSocketRoute
-        # Insert at index 0 to override catch-all routes
-        app.routes.insert(0, WebSocketRoute("/livecamws", livecam_websocket_endpoint))
-        LOGGER.info("Successfully registered custom Starlette WebSocket route /livecamws!")
+    try:
+        has_route = any(getattr(route, "path", None) == "/livecamws" for route in app.routes)
+        if not has_route:
+            from starlette.routing import WebSocketRoute
+            # Insert at index 0 to override catch-all routes
+            app.routes.insert(0, WebSocketRoute("/livecamws", livecam_websocket_endpoint))
+            LOGGER.info("Successfully registered custom Starlette WebSocket route /livecamws!")
+            return "Successfully registered WebSocket route /livecamws"
+        else:
+            return "WebSocket route /livecamws already registered"
+    except Exception as exc:
+        LOGGER.exception("Failed to register WebSocket route:")
+        return f"Registration failed: {exc}"
