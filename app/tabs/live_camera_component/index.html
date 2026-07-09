@@ -246,17 +246,17 @@
     const errTitle = document.getElementById("errTitle");
     const errDesc = document.getElementById("errDesc");
 
-    let ws = null;
-    let wsPort = 8504;
     let sessionId = "default";
-    let isProcessing = false;
-    let wsConnected = false;
     let cameraActive = false;
     let streamRef = null;
     
+    // Loop control
+    let isProcessing = false;
+    let watchdogTimer = null;
+    let lastSentTime = 0;
+    
     // FPS tracking
     let frameTimes = [];
-    let processedFrameCount = 0;
     let lastFpsUpdateTime = 0;
 
     // Web Audio Synthesized Chime (synthesized D5 -> A5 tone)
@@ -305,7 +305,7 @@
         container.classList.add("streaming");
         fpsBadge.style.display = "flex";
       } else if (state === "connecting") {
-        connText.innerText = "Connecting...";
+        connText.innerText = "Initializing...";
         container.classList.remove("streaming");
       } else {
         connText.innerText = "Offline";
@@ -327,6 +327,7 @@
     // Set up WebCam stream
     async function startCamera() {
       if (cameraActive) return true;
+      updateConnectionState("connecting");
       showUIError("Camera Init", "Requesting webcam permissions...");
       
       const constraints = {
@@ -351,6 +352,10 @@
             canvas.height = video.videoHeight;
             setFrameHeight();
             hideUIError();
+            updateConnectionState("connected");
+            
+            // Trigger the first frame capture immediately
+            captureAndSendFrame();
             resolve(true);
           };
         });
@@ -361,6 +366,7 @@
           "Webcam access was rejected or unavailable. Please ensure your browser has camera permissions allowed and this page is loaded in a secure context (localhost or https)."
         );
         cameraActive = false;
+        updateConnectionState("disconnected");
         return false;
       }
     }
@@ -373,81 +379,46 @@
       video.srcObject = null;
       cameraActive = false;
       updateConnectionState("disconnected");
+      clearTimeout(watchdogTimer);
     }
 
-    // Connect to WebSocket Server
-    function connectWebSocket() {
-      if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-        return;
-      }
+    // Capture frame and send via Streamlit component API
+    function captureAndSendFrame() {
+      if (!cameraActive) return;
       
-      updateConnectionState("connecting");
-      const host = window.location.hostname || "localhost";
-      const wsUrl = `ws://${host}:${wsPort}`;
+      // Prevent parallel overlap sends
+      if (isProcessing) return;
+      isProcessing = true;
       
-      console.log(`Connecting to WebSocket server at: ${wsUrl}`);
+      clearTimeout(watchdogTimer);
       
-      ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        console.log("WebSocket connection established successfully.");
-        wsConnected = true;
-        updateConnectionState("connected");
-        hideUIError();
-        
-        // Handshake message with session ID
-        ws.send(JSON.stringify({
-          type: "handshake",
-          session_id: sessionId
-        }));
-        
-        // Start processing frames
+      // Capture frame to temporary hidden canvas
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = 640;
+      tempCanvas.height = 480;
+      const tempCtx = tempCanvas.getContext("2d");
+      
+      // Draw current video frame to temporary canvas
+      tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+      
+      // Compress as low-overhead JPEG
+      const base64Data = tempCanvas.toDataURL("image/jpeg", 0.65).split(",")[1];
+      
+      lastSentTime = Date.now();
+      
+      // Send to Streamlit
+      setComponentValue({
+        image: base64Data,
+        timestamp: lastSentTime
+      });
+      
+      // Setup watchdog timer: if Python doesn't respond and render back within 1500ms,
+      // force trigger the next frame so the stream doesn't get stuck permanently.
+      watchdogTimer = setTimeout(() => {
+        console.warn("Watchdog fired: no response from Streamlit. Forcing next frame...");
         isProcessing = false;
-        requestAnimationFrame(processLoop);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const response = JSON.parse(event.data);
-          
-          if (response.status === "success" || response.status === "processing") {
-            // Render the overlays
-            drawBoundingBoxes(response.annotations || []);
-            
-            // Handle audio and Streamlit synchronization events
-            if (response.event === "play_beep") {
-              playSuccessChime();
-            }
-            if (response.sync_ui) {
-              setComponentValue(Date.now()); // notifies Streamlit to trigger rerun
-            }
-            
-            // Update processing FPS metrics
-            trackFPS();
-          }
-        } catch (err) {
-          console.error("Failed to parse websocket message:", err);
-        } finally {
-          isProcessing = false;
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.error("WebSocket connection encountered an error:", err);
-      };
-
-      ws.onclose = () => {
-        console.log("WebSocket connection was closed.");
-        wsConnected = false;
-        updateConnectionState("disconnected");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Reconnect after 3 seconds if camera is active
-        if (cameraActive) {
-          showUIError("Service Disconnected", "WebSocket connection lost. Retrying in 3 seconds...");
-          setTimeout(connectWebSocket, 3000);
-        }
-      };
+        captureAndSendFrame();
+      }, 1500);
     }
 
     // Bounding Box Overlay Drawing
@@ -456,22 +427,8 @@
       
       annotations.forEach(face => {
         const [x1, y1, x2, y2] = face.bbox;
-        const colorArr = face.color || [16, 185, 129]; // BGR or RGB depending on backend
-        
-        // Convert BGR array if necessary. Since backend produces BGR / RGB color tuples:
-        // _render_face_box_sm: Green is (16, 185, 129), Yellow is (234, 179, 8), Red is (239, 68, 68)
-        // Let's format it to rgb string
+        const colorArr = face.color || [16, 185, 129];
         const colorStr = `rgb(${colorArr[0]}, ${colorArr[1]}, ${colorArr[2]})`;
-        
-        // Draw matched bounding box. We scale relative to video canvas dimensions
-        // Canvas is mirrored scaleX(-1) if video is mirrored.
-        // Wait, to keep coordinates matching natural camera view, let's mirror them inside canvas!
-        // Because canvas is mirrored (transform: scaleX(-1)), everything we draw is also mirrored!
-        // That means an x-coordinate of X should be drawn at X, and the browser handles mirror!
-        // Wait, let's verify if that's correct: yes, if the canvas has `scaleX(-1)` in CSS,
-        // then everything drawn on the canvas is flipped horizontally.
-        // Therefore, we can just draw the coordinates directly, and the browser horizontal flipping
-        // will flip the box to match the flipped video! This is perfect!
         
         ctx.strokeStyle = colorStr;
         ctx.lineWidth = 3;
@@ -499,7 +456,6 @@
         const tagHeight = 24;
         const padding = 6;
         
-        // We draw the tag background above the bounding box
         const textY = y1 > 35 ? y1 - 6 : y1 + tagHeight + 6;
         
         ctx.font = "bold 13px ui-sans-serif, system-ui";
@@ -518,56 +474,13 @@
       });
     }
 
-    // Ping-pong video loop
-    function processLoop() {
-      if (!cameraActive || !wsConnected) return;
-
-      if (!isProcessing) {
-        isProcessing = true;
-        
-        // Capture frame to temporary hidden canvas
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = 640;
-        tempCanvas.height = 480;
-        const tempCtx = tempCanvas.getContext("2d");
-        
-        // Draw current video frame to temporary canvas
-        tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
-        
-        // Compress as low-overhead JPEG
-        const base64Data = tempCanvas.toDataURL("image/jpeg", 0.6).split(",")[1];
-        
-        // Send to WebSocket
-        try {
-          ws.send(JSON.stringify({
-            type: "frame",
-            image: base64Data
-          }));
-        } catch (err) {
-          console.error("Failed to send frame over websocket:", err);
-          isProcessing = false;
-        }
-      }
-      
-      // Keep loop alive via requestAnimationFrame
-      // Throttling: only schedule the next frame grab after a small pause or immediately
-      // The ping-pong flag `isProcessing` protects from overlapping requests
-      setTimeout(() => {
-        requestAnimationFrame(processLoop);
-      }, 33); // Capped at ~30 FPS capture rate
-    }
-
     // FPS tracker
     function trackFPS() {
       const now = performance.now();
       frameTimes.push(now);
-      
-      // Filter out times older than 1 second
       frameTimes = frameTimes.filter(t => now - t < 1000);
       
-      processedFrameCount++;
-      
-      if (now - lastFpsUpdateTime > 500) { // update UI twice a second
+      if (now - lastFpsUpdateTime > 500) {
         fpsText.innerText = `${frameTimes.length} FPS`;
         lastFpsUpdateTime = now;
       }
@@ -575,34 +488,42 @@
 
     // Streamlit message listener
     window.addEventListener("message", async (event) => {
-      // Check if it's the initialization message from Streamlit
       if (event.data.type === "streamlit:render") {
         const args = event.data.args;
         
-        // Save arguments passed from Python
-        wsPort = args.port || 8504;
         sessionId = args.session_id || "default";
         
-        // Initial setup
-        const success = await startCamera();
-        if (success) {
-          connectWebSocket();
+        // Clear watchdog
+        clearTimeout(watchdogTimer);
+        isProcessing = false;
+        
+        // Render overlays if annotations are passed from Python
+        if (args.annotations) {
+          drawBoundingBoxes(args.annotations);
+          trackFPS();
+        }
+        
+        // Play beep chime if triggered by backend
+        if (args.play_beep) {
+          playSuccessChime();
+        }
+        
+        // Setup initial camera stream or trigger next frame
+        if (!cameraActive) {
+          await startCamera();
+        } else {
+          // Schedule next frame in next animation frame
+          requestAnimationFrame(captureAndSendFrame);
         }
       }
     });
 
     // Notify Streamlit that we are ready
     sendMessage("streamlit:componentReady", { apiVersion: 1 });
-    
-    // Set initial frame size height
     setFrameHeight();
     
-    // Clean up when tab is destroyed
     window.onbeforeunload = () => {
       stopCamera();
-      if (ws) {
-        ws.close();
-      }
     };
   </script>
 </body>
