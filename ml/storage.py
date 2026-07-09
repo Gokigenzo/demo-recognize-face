@@ -1,184 +1,131 @@
-"""Lightweight persistence layer (JSON / CSV / Pickle).
+"""Persistence layer adapter wrapping the Supabase Repository Layer.
 
-This module isolates *all* disk I/O so the rest of the codebase never touches
-file paths directly. It deliberately uses simple, human-inspectable formats
-(JSON + CSV) plus pickle for the numeric embedding database, matching the
-demo's "storage" learning objective.
+This module acts as a backward-compatible wrapper. The rest of the codebase
+imports functions from this module as usual, but all storage operations are
+internally dispatched to the clean Repository Layer backed by Supabase with
+in-memory caching and offline fallbacks.
 """
 from __future__ import annotations
 
-import csv
-import json
+import logging
 import os
-import pickle
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from ml import config
+# Import concrete repositories and singleton accessors
+from repositories import (
+    get_manager,
+    get_student_repo,
+    get_embedding_repo,
+    get_attendance_repo,
+    get_feedback_repo,
+    get_statistics_repo,
+    get_configuration_repo,
+    get_classifier_repo,
+)
+
+logger = logging.getLogger(__name__)
+
+# Re-export BUNDLE_VERSION
+BUNDLE_VERSION = 1
 
 
 # ---------------------------------------------------------------------------
-# Users (JSON)
+# Registered Students (legacy name: Users)
 # ---------------------------------------------------------------------------
 def load_users() -> Dict[str, Dict[str, Any]]:
     """Return the registered-user metadata mapping {user_id: {...}}."""
-    if not os.path.exists(config.USERS_DB_PATH):
-        return {}
-    with open(config.USERS_DB_PATH, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    return get_student_repo().load_all()
 
 
 def save_users(users: Dict[str, Dict[str, Any]]) -> None:
-    config.ensure_dirs()
-    with open(config.USERS_DB_PATH, "w", encoding="utf-8") as fh:
-        json.dump(users, fh, indent=2)
+    """Overwrite all registered student records."""
+    get_student_repo().save_all(users)
 
 
 def upsert_user(user_id: str, name: str, extra: Dict[str, Any] | None = None) -> None:
-    """Create or update a user record."""
-    users = load_users()
-    record = users.get(user_id, {"created_at": datetime.now().isoformat()})
-    record.update({"user_id": user_id, "name": name})
-    if extra:
-        record.update(extra)
-    users[user_id] = record
-    save_users(users)
+    """Create or update a single user record."""
+    get_student_repo().upsert(user_id, name, extra)
 
 
 # ---------------------------------------------------------------------------
-# Embedding database (Pickle)
+# Embedding Database
 # ---------------------------------------------------------------------------
 def load_embeddings_db() -> Dict[str, List[np.ndarray]]:
-    """Return {user_id: [embedding, ...]}.
-
-    Embeddings are stored as a list per user so we can keep multiple poses /
-    augmented samples and average / search across them.
-    """
-    if not os.path.exists(config.EMBEDDINGS_DB_PATH):
-        return {}
-    with open(config.EMBEDDINGS_DB_PATH, "rb") as fh:
-        return pickle.load(fh)
+    """Return the embeddings database {user_id: [embedding, ...]}."""
+    return get_embedding_repo().load_all()
 
 
 def save_embeddings_db(db: Dict[str, List[np.ndarray]]) -> None:
-    config.ensure_dirs()
-    with open(config.EMBEDDINGS_DB_PATH, "wb") as fh:
-        pickle.dump(db, fh)
+    """Overwrite the entire embeddings database."""
+    get_embedding_repo().save_all(db)
 
 
 def add_embeddings(user_id: str, embeddings: List[np.ndarray]) -> None:
     """Append one or more embeddings for a user and persist."""
-    db = load_embeddings_db()
-    db.setdefault(user_id, [])
-    db[user_id].extend([np.asarray(e, dtype=np.float32) for e in embeddings])
-    save_embeddings_db(db)
+    get_embedding_repo().add(user_id, embeddings)
 
 
 # ---------------------------------------------------------------------------
-# Trained classifier (Pickle)
+# Trained Classifier
 # ---------------------------------------------------------------------------
 def save_classifier(payload: Dict[str, Any]) -> None:
     """Persist a trained classifier bundle (model + metadata)."""
-    config.ensure_dirs()
-    with open(config.CLASSIFIER_PATH, "wb") as fh:
-        pickle.dump(payload, fh)
+    get_classifier_repo().save(payload)
 
 
 def load_classifier() -> Dict[str, Any] | None:
     """Return the persisted classifier bundle, or None if not trained yet."""
-    if not os.path.exists(config.CLASSIFIER_PATH):
-        return None
-    with open(config.CLASSIFIER_PATH, "rb") as fh:
-        return pickle.load(fh)
+    return get_classifier_repo().load()
 
 
 # ---------------------------------------------------------------------------
-# Attendance log (CSV)
+# Attendance Log
 # ---------------------------------------------------------------------------
-ATTENDANCE_FIELDS = ["timestamp", "user_id", "name", "confidence", "status"]
-
-
 def append_attendance(
     user_id: str, name: str, confidence: float, status: str = "present"
 ) -> Dict[str, Any]:
     """Append a single attendance row and return the row written."""
-    config.ensure_dirs()
-    row = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "user_id": user_id,
-        "name": name,
-        "confidence": round(float(confidence), 4),
-        "status": status,
-    }
-    file_exists = os.path.exists(config.ATTENDANCE_LOG_PATH)
-    with open(config.ATTENDANCE_LOG_PATH, "a", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=ATTENDANCE_FIELDS)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row)
-    return row
+    return get_attendance_repo().append(user_id, name, confidence, status)
 
 
 def load_attendance() -> List[Dict[str, Any]]:
-    if not os.path.exists(config.ATTENDANCE_LOG_PATH):
-        return []
-    with open(config.ATTENDANCE_LOG_PATH, "r", newline="", encoding="utf-8") as fh:
-        return list(csv.DictReader(fh))
+    """Load all attendance records."""
+    return get_attendance_repo().load_all()
 
 
 # ---------------------------------------------------------------------------
-# Feedback / monitoring logs (JSON lists)
+# Feedback / Monitoring Logs
 # ---------------------------------------------------------------------------
-def _load_json_list(path: str) -> List[Dict[str, Any]]:
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as fh:
-        try:
-            return json.load(fh)
-        except json.JSONDecodeError:
-            return []
-
-
-def _append_json_list(path: str, entry: Dict[str, Any]) -> None:
-    config.ensure_dirs()
-    data = _load_json_list(path)
-    data.append(entry)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-
-
 def append_feedback(entry: Dict[str, Any]) -> None:
-    _append_json_list(config.FEEDBACK_LOG_PATH, entry)
+    """Log a human correction feedback entry."""
+    get_feedback_repo().append_feedback(entry)
 
 
 def load_feedback() -> List[Dict[str, Any]]:
-    return _load_json_list(config.FEEDBACK_LOG_PATH)
+    """Load correction feedback logs."""
+    return get_feedback_repo().load_feedback()
 
 
 def append_monitoring(entry: Dict[str, Any]) -> None:
-    _append_json_list(config.MONITORING_LOG_PATH, entry)
+    """Log a system monitoring entry."""
+    get_feedback_repo().append_monitoring(entry)
 
 
 def load_monitoring() -> List[Dict[str, Any]]:
-    return _load_json_list(config.MONITORING_LOG_PATH)
+    """Load monitoring logs."""
+    return get_feedback_repo().load_monitoring()
 
 
 # ---------------------------------------------------------------------------
-# Portable demo bundle (export / import for offline presentations)
+# Portable Demo Bundle (export / import)
 # ---------------------------------------------------------------------------
-# Bump this if the bundle layout ever changes so imports can validate it.
-BUNDLE_VERSION = 1
-
-
 def export_bundle() -> bytes:
-    """Serialize the entire demo state into a single portable byte blob.
-
-    Bundles the registered users, the embedding database, and (if present) the
-    trained classifier so a presenter can reload a pre-enrolled dataset on any
-    machine with no internet or re-enrollment required.
-    """
+    """Serialize the entire active demo state into a single portable byte blob."""
+    import pickle
     bundle = {
         "version": BUNDLE_VERSION,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -190,26 +137,23 @@ def export_bundle() -> bytes:
 
 
 def import_bundle(data: bytes, *, replace: bool = True) -> Dict[str, Any]:
-    """Load a previously exported bundle and write it to disk.
-
-    When ``replace`` is True the current users/embeddings/classifier are fully
-    overwritten; otherwise embeddings are merged per-user. Returns a small
-    summary describing what was imported.
-
-    Raises ``ValueError`` if the blob is not a recognizable demo bundle.
-    """
+    """Load a previously exported bundle and write it to disk and Supabase."""
+    import pickle
     try:
         bundle = pickle.loads(data)
-    except Exception as exc:  # corrupt / wrong file type
+    except Exception as exc:
         raise ValueError(f"Not a valid demo bundle: {exc}") from exc
 
     if not isinstance(bundle, dict) or "embeddings" not in bundle or "users" not in bundle:
         raise ValueError("File is not a recognizable ML Lifecycle demo bundle.")
 
-    config.ensure_dirs()
     users = bundle.get("users", {}) or {}
     embeddings = bundle.get("embeddings", {}) or {}
     classifier = bundle.get("classifier")
+
+    # Invalidate cache so they reload from DB/files
+    get_student_repo().invalidate_cache()
+    get_embedding_repo().invalidate_cache()
 
     if replace:
         save_users(users)
@@ -218,6 +162,7 @@ def import_bundle(data: bytes, *, replace: bool = True) -> Dict[str, Any]:
              for uid, embs in embeddings.items()}
         )
     else:
+        # Merge operation
         merged_users = load_users()
         merged_users.update(users)
         save_users(merged_users)
@@ -237,11 +182,7 @@ def import_bundle(data: bytes, *, replace: bool = True) -> Dict[str, Any]:
 
 
 def generate_historical_scientists_bundle(file_path: str) -> None:
-    """Generate a sample bundle containing historical scientists and save it to file_path.
-
-    Constructs well-separated embedding clusters for Ada Lovelace, Alan Turing,
-    and Grace Hopper, trains an initial SVM model, and exports the bundle.
-    """
+    """Generate a sample bundle containing Ada Lovelace, Alan Turing, and Grace Hopper."""
     current_users = load_users()
     current_embeddings = load_embeddings_db()
     current_classifier = load_classifier()
@@ -287,7 +228,6 @@ def generate_historical_scientists_bundle(file_path: str) -> None:
             }
         }
 
-        # Generate base poses (std = 0.03) + augmented (std = 0.08)
         embeddings_db = {
             "ada_lovelace": get_noisy_embs(ada_center, 5, 0.03) + get_noisy_embs(ada_center, 20, 0.08),
             "alan_turing": get_noisy_embs(turing_center, 5, 0.03) + get_noisy_embs(turing_center, 20, 0.08),
@@ -314,11 +254,11 @@ def generate_historical_scientists_bundle(file_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Maintenance helpers (used by the UI "reset demo" button & tests)
+# Reset & Maintenance Helpers
 # ---------------------------------------------------------------------------
-
 def reset_all() -> None:
-    """Delete all persisted demo artifacts. Used to reset between demos."""
+    """Delete all persisted demo artifacts locally and in Supabase."""
+    # 1. Clear local cache and files
     for path in (
         config.EMBEDDINGS_DB_PATH,
         config.CLASSIFIER_PATH,
@@ -328,4 +268,162 @@ def reset_all() -> None:
         config.MONITORING_LOG_PATH,
     ):
         if os.path.exists(path):
-            os.remove(path)
+            try:
+                os.remove(path)
+            except Exception as exc:
+                logger.error("Failed to delete local file %s during reset: %s", path, exc)
+
+    # Invalidate repository caches
+    get_student_repo().invalidate_cache()
+    get_embedding_repo().invalidate_cache()
+    get_attendance_repo().invalidate_cache()
+    get_feedback_repo().invalidate_cache()
+    get_statistics_repo().invalidate_cache()
+    get_configuration_repo().invalidate_cache()
+
+    # 2. Reset Supabase tables if online
+    manager = get_manager()
+    if manager.is_online and manager.client is not None:
+        try:
+            logger.info("Resetting all Supabase tables …")
+            # Truncating / deleting records in order of dependencies (leaves first, roots last)
+            manager.client.table("embeddings").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+            manager.client.table("attendance").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+            manager.client.table("monitoring_feedback").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+            manager.client.table("students").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+            manager.client.table("trained_classifiers").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+            manager.client.table("session_statistics").delete().neq("session_id", "00000000-0000-0000-0000-000000000000").execute()
+            
+            # Reset application config to defaults
+            manager.client.table("application_configuration").delete().eq("id", "default").execute()
+            
+            # Delete Storage classifier file if exists
+            try:
+                manager.client.storage.from_("models").remove(["classifier.pkl"])
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.warning("Failed to reset Supabase tables: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# One-time Local -> Supabase Data Migration
+# ---------------------------------------------------------------------------
+def run_migration_if_needed() -> None:
+    """Run one-time migration of local files to Supabase when first launched."""
+    manager = get_manager()
+    if not manager.is_online:
+        return
+
+    # Check if migration has already been recorded
+    config_repo = get_configuration_repo()
+    cfg = config_repo.load()
+    if cfg.get("ui_preferences", {}).get("migration_completed") is True:
+        return
+
+    logger.info("Executing one-time local-to-Supabase migration …")
+    try:
+        # Load local files
+        local_students = get_student_repo()._load_local_backup()
+        local_embeddings = get_embedding_repo()._load_local_backup()
+        local_attendance = get_attendance_repo()._load_local()
+        local_feedback = get_feedback_repo()._load_json_list(config.FEEDBACK_LOG_PATH)
+        local_classifier = get_classifier_repo().load()  # Try loading local pickle
+
+        # 1. Migrate Students
+        if local_students:
+            logger.info("Migrating %d students …", len(local_students))
+            get_student_repo().save_all(local_students)
+            
+            # Force load to establish uuid mappings
+            get_student_repo().invalidate_cache()
+            get_student_repo().load_all()
+
+        # 2. Migrate Embeddings
+        if local_embeddings:
+            logger.info("Migrating embeddings database …")
+            get_embedding_repo().save_all(local_embeddings)
+
+        # 3. Migrate Attendance Logs
+        if local_attendance:
+            logger.info("Migrating %d attendance rows …", len(local_attendance))
+            for row in local_attendance:
+                # Format timestamp
+                ts = row.get("timestamp")
+                if ts:
+                    try:
+                        ts = datetime.fromisoformat(ts).isoformat()
+                    except ValueError:
+                        ts = datetime.now().isoformat()
+                else:
+                    ts = datetime.now().isoformat()
+
+                student_uuid = get_student_repo().get_uuid(row.get("user_id"))
+                db_row = {
+                    "timestamp": ts,
+                    "confidence": float(row.get("confidence", 0.0)),
+                    "recognition_method": "InsightFace_Migration",
+                    "status": row.get("status", "present"),
+                }
+                if student_uuid:
+                    db_row["student_id"] = student_uuid
+                
+                if not manager.is_online or manager.client is None:
+                    raise RuntimeError("Supabase offline during attendance migration")
+                manager.client.table("attendance").insert(db_row).execute()
+
+        # 4. Migrate Feedback logs
+        if local_feedback:
+            logger.info("Migrating %d feedback loop logs …", len(local_feedback))
+            for entry in local_feedback:
+                slug = entry.get("correct_user_id")
+                student_uuid = get_student_repo().get_uuid(slug) if slug else None
+                
+                db_row = {
+                    "predicted_name": entry.get("predicted"),
+                    "correct_name": entry.get("corrected_to"),
+                    "correct_student_id": slug,
+                    "confidence": entry.get("confidence", 0.0),
+                    "user_decision": "Correction_Migration",
+                    "note": entry.get("note", ""),
+                    "timestamp": entry.get("timestamp"),
+                }
+                if student_uuid:
+                    db_row["student_id"] = student_uuid
+                
+                if not manager.is_online or manager.client is None:
+                    raise RuntimeError("Supabase offline during feedback migration")
+                manager.client.table("monitoring_feedback").insert(db_row).execute()
+
+        # 5. Migrate Classifier Model Bundle
+        if local_classifier:
+            logger.info("Migrating trained model classifier …")
+            get_classifier_repo().save(local_classifier)
+
+        # Write migration completion flag
+        prefs = cfg.get("ui_preferences", {})
+        prefs["migration_completed"] = True
+        cfg["ui_preferences"] = prefs
+        
+        if not manager.is_online or manager.client is None:
+            raise RuntimeError("Supabase offline during migration completion registration")
+        config_repo.save(cfg)
+        logger.info("Migration completed successfully!")
+
+    except Exception as exc:
+        logger.error("Error during one-time migration to Supabase: %s", exc)
+
+
+
+# Trigger auto-migration on start if online
+run_migration_if_needed()
+
+# Clear repository caches on module import/reload to ensure alignment with config paths
+# (critical for preventing cache leakage between isolated pytest environments)
+get_student_repo().invalidate_cache()
+get_embedding_repo().invalidate_cache()
+get_attendance_repo().invalidate_cache()
+get_feedback_repo().invalidate_cache()
+get_statistics_repo().invalidate_cache()
+get_configuration_repo().invalidate_cache()
+

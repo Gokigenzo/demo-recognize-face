@@ -1,10 +1,14 @@
 myvenv/
+.venv*/
 __pycache__/
 *.pyc
 datasets/*.json
 models/*.pkl
 logs/*.csv
 logs/*.json
+logs/pending_sync.json
 .pytest_cache/
 ~/.insightface/
 datasets/sample_bundle.pkl
+.env
+.env.local
