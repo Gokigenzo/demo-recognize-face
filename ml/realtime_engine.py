@@ -121,7 +121,8 @@ class RealtimeAttendanceEngine:
             raise RuntimeError("Loaded classifier bundle is missing class metadata.")
         self._classifier_id = current_id
         self._classifier_loaded = True
-        logger.info("Realtime engine dynamically loaded/updated the classifier model.")
+        LOGGER.info("Realtime engine dynamically loaded/updated the classifier model.")
+
 
 
     def _predict_identity(self, embedding: np.ndarray) -> RecognitionResult:
