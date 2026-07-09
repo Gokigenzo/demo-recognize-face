@@ -162,6 +162,21 @@ def render() -> None:
 
     camera_opened = st.session_state.get("camera_opened", False)
 
+    # Inject Custom CSS to hide Streamlit's top decoration bar and loading status widget
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stDecoration"] {
+            display: none !important;
+        }
+        div[data-testid="stStatusWidget"] {
+            display: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     # UI Grid Setup
     dashboard_placeholder = st.empty()
     st.markdown("---")
@@ -176,14 +191,60 @@ def render() -> None:
         st.markdown("### Camera")
         if capture_mode == "Live Browser Camera (low-lag)":
             st.caption("⚠️ Webcam streaming requires a Secure Context (localhost or HTTPS).")
-            # Register the Starlette WebSocket route and active session
-            from app.tabs.live_camera_server import register_starlette_route, register_session
-            ws_status = register_starlette_route()
-            st.caption(f"🔧 WebSocket server: **{ws_status}**")
-            register_session(session_id, session, engine)
             
-            # Render the browser camera widget
-            live_camera_widget(session_id=session_id, key="live_camera_feed")
+            # Setup session state cache variables for processing the Native component stream
+            if "live_annotations" not in st.session_state:
+                st.session_state.live_annotations = []
+            if "last_processed_timestamp" not in st.session_state:
+                st.session_state.last_processed_timestamp = 0
+            if "prev_records_len" not in st.session_state:
+                st.session_state.prev_records_len = len(session.records)
+                
+            # 1. Read last sent widget value from session state
+            widget_result = st.session_state.get("live_camera_feed")
+            
+            # 2. Process frame if a new one was sent by the browser component
+            if widget_result and widget_result.get("timestamp", 0) > st.session_state.last_processed_timestamp:
+                st.session_state.last_processed_timestamp = widget_result["timestamp"]
+                try:
+                    img_b64 = widget_result["image"]
+                    import base64
+                    import cv2
+                    import numpy as np
+                    img_bytes = base64.b64decode(img_b64)
+                    nparr = np.frombuffer(img_bytes, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    
+                    if frame is not None and frame.size > 0:
+                        # Process BGR frame using the engine
+                        annotated_frame, predictions, annotations = engine.process_photo(frame)
+                        st.session_state.live_annotations = annotations
+                except Exception as exc:
+                    LOGGER.warning(f"Error processing frame: {exc}")
+                    
+            # 3. Serialize annotations for component rendering
+            serialized_annotations = []
+            for face in st.session_state.live_annotations:
+                serialized_annotations.append({
+                    "bbox": [int(v) for v in face.bbox],
+                    "confidence": float(face.confidence),
+                    "label": str(face.label),
+                    "status": str(face.status),
+                    "color": [int(c) for c in face.color]
+                })
+                
+            play_beep = False
+            if len(session.records) > st.session_state.prev_records_len:
+                play_beep = True
+                st.session_state.prev_records_len = len(session.records)
+                
+            # 4. Render the widget with fresh annotations
+            live_camera_widget(
+                session_id=session_id,
+                annotations=serialized_annotations,
+                play_beep=play_beep,
+                key="live_camera_feed"
+            )
         else:
             camera_placeholder = st.empty()
             camera_control_placeholder = st.empty()
@@ -213,7 +274,7 @@ def render() -> None:
                     st.rerun()
         elif capture_mode == "Live Browser Camera (low-lag)":
             st.success("⚡ Live camera streaming is active.")
-            st.info("Webcam frames are processed directly via Streamlit's native channel.")
+            st.info("Webcam frames are processed directly via Streamlit's native channel at ~2.5 FPS.")
         else:
             st.info("Photo capture mode is active.")
 
