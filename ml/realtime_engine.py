@@ -105,17 +105,24 @@ class RealtimeAttendanceEngine:
         self.state_machines: Dict[int, RecognitionStateMachine] = {}
 
     def load_classifier(self) -> None:
-        if self._classifier_loaded:
-            return
         bundle = storage.load_classifier()
         if bundle is None or "classifier" not in bundle:
             raise RuntimeError("No trained classifier available for Application page.")
+        
+        # Determine if the classifier has changed by checking metadata
+        current_id = (bundle.get("kind"), bundle.get("train_accuracy"), bundle.get("n_samples"))
+        if self._classifier_loaded and getattr(self, "_classifier_id", None) == current_id:
+            return
+
         self._classifier = bundle["classifier"]
         self._classes = list(bundle.get("classes", []))
         self._class_names = list(bundle.get("class_names", []))
         if len(self._classes) != len(self._class_names):
             raise RuntimeError("Loaded classifier bundle is missing class metadata.")
+        self._classifier_id = current_id
         self._classifier_loaded = True
+        logger.info("Realtime engine dynamically loaded/updated the classifier model.")
+
 
     def _predict_identity(self, embedding: np.ndarray) -> RecognitionResult:
         if self._classifier is None:

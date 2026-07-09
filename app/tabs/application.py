@@ -143,9 +143,16 @@ def render() -> None:
             LOGGER.exception("Failed to initialize realtime attendance engine.")
             st.error(f"Unable to load the model: {exc}")
             return
+    else:
+        # Check and reload classifier dynamically if it was retrained
+        try:
+            st.session_state.engine.load_classifier()
+        except Exception as exc:
+            st.warning(f"Unable to reload updated model: {exc}")
 
     engine: RealtimeAttendanceEngine = st.session_state.engine
     engine.set_threshold(threshold)
+
     camera_opened = st.session_state.get("camera_opened", False)
 
     # UI Grid Setup
