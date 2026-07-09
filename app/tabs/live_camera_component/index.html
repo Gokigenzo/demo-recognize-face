@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Camera Stream</title>
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --panel-bg: rgba(30, 41, 59, 0.7);
+      --border-color: rgba(255, 255, 255, 0.1);
+      --glow-active: rgba(16, 185, 129, 0.35);
+      --font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: transparent;
+      font-family: var(--font-family);
+      overflow: hidden;
+      color: #f1f5f9;
+    }
+
+    .camera-container {
+      position: relative;
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      aspect-ratio: 4 / 3;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border-color);
+      background-color: var(--bg-color);
+      transition: box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+
+    .camera-container.streaming {
+      border-color: #10b981;
+      box-shadow: 0 0 20px var(--glow-active);
+    }
+
+    video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror view for natural camera feedback */
+    }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .status-overlay {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+    }
+
+    .badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .badge-connection {
+      background-color: rgba(30, 41, 59, 0.75);
+    }
+
+    .badge-connection.connected {
+      color: #34d399;
+      border-color: rgba(52, 211, 153, 0.2);
+    }
+
+    .badge-connection.connecting {
+      color: #fbbf24;
+      border-color: rgba(251, 191, 36, 0.2);
+    }
+
+    .badge-connection.disconnected {
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.2);
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: currentColor;
+    }
+
+    .dot-pulsing {
+      animation: pulse 1.5s infinite alternate;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.4; }
+      100% { opacity: 1; }
+    }
+
+    .badge-fps {
+      background-color: rgba(15, 23, 42, 0.6);
+      color: #94a3b8;
+    }
+
+    .error-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(15, 23, 42, 0.85);
+      z-index: 20;
+      padding: 24px;
+      text-align: center;
+      box-sizing: border-box;
+    }
+
+    .error-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ef4444;
+      margin-bottom: 8px;
+    }
+
+    .error-desc {
+      font-size: 13px;
+      color: #94a3b8;
+      max-width: 400px;
+      line-height: 1.5;
+    }
+
+    /* Target bracket decorations on corners */
+    .corner-bracket {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      z-index: 5;
+      pointer-events: none;
+      transition: border-color 0.3s ease;
+    }
+    
+    .streaming .corner-bracket {
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .cb-tl { top: 16px; left: 16px; border-right: 0; border-bottom: 0; }
+    .cb-tr { top: 16px; right: 16px; border-left: 0; border-bottom: 0; }
+    .cb-bl { bottom: 16px; left: 16px; border-right: 0; border-top: 0; }
+    .cb-br { bottom: 16px; right: 16px; border-left: 0; border-top: 0; }
+  </style>
+</head>
+<body>
+
+  <div class="camera-container" id="container">
+    <!-- Camera viewports -->
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+
+    <!-- Corner decorations -->
+    <div class="corner-bracket cb-tl"></div>
+    <div class="corner-bracket cb-tr"></div>
+    <div class="corner-bracket cb-bl"></div>
+    <div class="corner-bracket cb-br"></div>
+
+    <!-- Badges -->
+    <div class="status-overlay">
+      <div class="badge badge-connection disconnected" id="connBadge">
+        <span class="dot dot-pulsing"></span>
+        <span id="connText">Offline</span>
+      </div>
+      <div class="badge badge-fps" id="fpsBadge" style="display: none;">
+        <span id="fpsText">0 FPS</span>
+      </div>
+    </div>
+
+    <!-- Error container -->
+    <div class="error-overlay" id="errorOverlay">
+      <div class="error-title" id="errTitle">Camera Initialization</div>
+      <div class="error-desc" id="errDesc">Connecting to service...</div>
+    </div>
+  </div>
+
+  <script>
+    // Streamlit custom component communication boilerplate
+    function sendMessage(type, data) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: type,
+        ...data
+      }, "*");
+    }
+
+    function setComponentValue(value) {
+      sendMessage("streamlit:setComponentValue", { value: value });
+    }
+
+    function setFrameHeight() {
+      // Streamlit frames should wrap the container perfectly
+      const container = document.getElementById("container");
+      const height = container.getBoundingClientRect().height;
+      sendMessage("streamlit:setFrameHeight", { height: height + 8 });
+    }
+
+    // App state variables
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("overlay");
+    const ctx = canvas.getContext("2d");
+    const container = document.getElementById("container");
+    
+    // UI badge elements
+    const connBadge = document.getElementById("connBadge");
+    const connText = document.getElementById("connText");
+    const fpsBadge = document.getElementById("fpsBadge");
+    const fpsText = document.getElementById("fpsText");
+    
+    // Error elements
+    const errorOverlay = document.getElementById("errorOverlay");
+    const errTitle = document.getElementById("errTitle");
+    const errDesc = document.getElementById("errDesc");
+
+    let ws = null;
+    let wsPort = 8504;
+    let sessionId = "default";
+    let isProcessing = false;
+    let wsConnected = false;
+    let cameraActive = false;
+    let streamRef = null;
+    
+    // FPS tracking
+    let frameTimes = [];
+    let processedFrameCount = 0;
+    let lastFpsUpdateTime = 0;
+
+    // Web Audio Synthesized Chime (synthesized D5 -> A5 tone)
+    function playSuccessChime() {
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        const audioCtx = new AudioContextClass();
+        
+        // Note 1 (D5, 587.33Hz)
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(587.33, audioCtx.currentTime);
+        gain1.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain1.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start();
+        osc1.stop(audioCtx.currentTime + 0.15);
+        
+        // Note 2 (A5, 880Hz) - played slightly offset
+        setTimeout(() => {
+          if (audioCtx.state === 'closed') return;
+          const osc2 = audioCtx.createOscillator();
+          const gain2 = audioCtx.createGain();
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(880.00, audioCtx.currentTime);
+          gain2.gain.setValueAtTime(0.12, audioCtx.currentTime);
+          gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+          osc2.connect(gain2);
+          gain2.connect(audioCtx.destination);
+          osc2.start();
+          osc2.stop(audioCtx.currentTime + 0.25);
+        }, 90);
+      } catch (err) {
+        console.error("Synthesizer audio trigger failed:", err);
+      }
+    }
+
+    // Set connection UI state
+    function updateConnectionState(state) {
+      connBadge.className = "badge badge-connection " + state;
+      if (state === "connected") {
+        connText.innerText = "Live";
+        container.classList.add("streaming");
+        fpsBadge.style.display = "flex";
+      } else if (state === "connecting") {
+        connText.innerText = "Connecting...";
+        container.classList.remove("streaming");
+      } else {
+        connText.innerText = "Offline";
+        container.classList.remove("streaming");
+        fpsBadge.style.display = "none";
+      }
+    }
+
+    function showUIError(title, desc) {
+      errorOverlay.style.display = "flex";
+      errTitle.innerText = title;
+      errDesc.innerText = desc;
+    }
+
+    function hideUIError() {
+      errorOverlay.style.display = "none";
+    }
+
+    // Set up WebCam stream
+    async function startCamera() {
+      if (cameraActive) return true;
+      showUIError("Camera Init", "Requesting webcam permissions...");
+      
+      const constraints = {
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 15 }
+        },
+        audio: false
+      };
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        streamRef = stream;
+        cameraActive = true;
+        
+        // Wait for video dimensions to load
+        return new Promise((resolve) => {
+          video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            setFrameHeight();
+            hideUIError();
+            resolve(true);
+          };
+        });
+      } catch (err) {
+        console.error("Camera access failed:", err);
+        showUIError(
+          "Webcam Permission Error",
+          "Webcam access was rejected or unavailable. Please ensure your browser has camera permissions allowed and this page is loaded in a secure context (localhost or https)."
+        );
+        cameraActive = false;
+        return false;
+      }
+    }
+
+    function stopCamera() {
+      if (streamRef) {
+        streamRef.getTracks().forEach(track => track.stop());
+        streamRef = null;
+      }
+      video.srcObject = null;
+      cameraActive = false;
+      updateConnectionState("disconnected");
+    }
+
+    // Connect to WebSocket Server
+    function connectWebSocket() {
+      if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+        return;
+      }
+      
+      updateConnectionState("connecting");
+      const host = window.location.hostname || "localhost";
+      const wsUrl = `ws://${host}:${wsPort}`;
+      
+      console.log(`Connecting to WebSocket server at: ${wsUrl}`);
+      
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log("WebSocket connection established successfully.");
+        wsConnected = true;
+        updateConnectionState("connected");
+        hideUIError();
+        
+        // Handshake message with session ID
+        ws.send(JSON.stringify({
+          type: "handshake",
+          session_id: sessionId
+        }));
+        
+        // Start processing frames
+        isProcessing = false;
+        requestAnimationFrame(processLoop);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const response = JSON.parse(event.data);
+          
+          if (response.status === "success" || response.status === "processing") {
+            // Render the overlays
+            drawBoundingBoxes(response.annotations || []);
+            
+            // Handle audio and Streamlit synchronization events
+            if (response.event === "play_beep") {
+              playSuccessChime();
+            }
+            if (response.sync_ui) {
+              setComponentValue(Date.now()); // notifies Streamlit to trigger rerun
+            }
+            
+            // Update processing FPS metrics
+            trackFPS();
+          }
+        } catch (err) {
+          console.error("Failed to parse websocket message:", err);
+        } finally {
+          isProcessing = false;
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket connection encountered an error:", err);
+      };
+
+      ws.onclose = () => {
+        console.log("WebSocket connection was closed.");
+        wsConnected = false;
+        updateConnectionState("disconnected");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Reconnect after 3 seconds if camera is active
+        if (cameraActive) {
+          showUIError("Service Disconnected", "WebSocket connection lost. Retrying in 3 seconds...");
+          setTimeout(connectWebSocket, 3000);
+        }
+      };
+    }
+
+    // Bounding Box Overlay Drawing
+    function drawBoundingBoxes(annotations) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      annotations.forEach(face => {
+        const [x1, y1, x2, y2] = face.bbox;
+        const colorArr = face.color || [16, 185, 129]; // BGR or RGB depending on backend
+        
+        // Convert BGR array if necessary. Since backend produces BGR / RGB color tuples:
+        // _render_face_box_sm: Green is (16, 185, 129), Yellow is (234, 179, 8), Red is (239, 68, 68)
+        // Let's format it to rgb string
+        const colorStr = `rgb(${colorArr[0]}, ${colorArr[1]}, ${colorArr[2]})`;
+        
+        // Draw matched bounding box. We scale relative to video canvas dimensions
+        // Canvas is mirrored scaleX(-1) if video is mirrored.
+        // Wait, to keep coordinates matching natural camera view, let's mirror them inside canvas!
+        // Because canvas is mirrored (transform: scaleX(-1)), everything we draw is also mirrored!
+        // That means an x-coordinate of X should be drawn at X, and the browser handles mirror!
+        // Wait, let's verify if that's correct: yes, if the canvas has `scaleX(-1)` in CSS,
+        // then everything drawn on the canvas is flipped horizontally.
+        // Therefore, we can just draw the coordinates directly, and the browser horizontal flipping
+        // will flip the box to match the flipped video! This is perfect!
+        
+        ctx.strokeStyle = colorStr;
+        ctx.lineWidth = 3;
+        
+        // Draw rounded rectangle for face
+        const width = x2 - x1;
+        const height = y2 - y1;
+        const radius = 8;
+        
+        ctx.beginPath();
+        ctx.moveTo(x1 + radius, y1);
+        ctx.lineTo(x2 - radius, y1);
+        ctx.quadraticCurveTo(x2, y1, x2, y1 + radius);
+        ctx.lineTo(x2, y2 - radius);
+        ctx.quadraticCurveTo(x2, y2, x2 - radius, y2);
+        ctx.lineTo(x1 + radius, y2);
+        ctx.quadraticCurveTo(x1, y2, x1, y2 - radius);
+        ctx.lineTo(x1, y1 + radius);
+        ctx.quadraticCurveTo(x1, y1, x1 + radius, y1);
+        ctx.closePath();
+        ctx.stroke();
+
+        // Draw overlay label name tag
+        ctx.fillStyle = colorStr;
+        const tagHeight = 24;
+        const padding = 6;
+        
+        // We draw the tag background above the bounding box
+        const textY = y1 > 35 ? y1 - 6 : y1 + tagHeight + 6;
+        
+        ctx.font = "bold 13px ui-sans-serif, system-ui";
+        const textWidth = ctx.measureText(face.label).width;
+        
+        // Tag box background
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        ctx.fillRect(x1, textY - 17, textWidth + padding * 2, tagHeight);
+        ctx.strokeStyle = colorStr;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x1, textY - 17, textWidth + padding * 2, tagHeight);
+        
+        // Tag text
+        ctx.fillStyle = colorStr;
+        ctx.fillText(face.label, x1 + padding, textY);
+      });
+    }
+
+    // Ping-pong video loop
+    function processLoop() {
+      if (!cameraActive || !wsConnected) return;
+
+      if (!isProcessing) {
+        isProcessing = true;
+        
+        // Capture frame to temporary hidden canvas
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = 640;
+        tempCanvas.height = 480;
+        const tempCtx = tempCanvas.getContext("2d");
+        
+        // Draw current video frame to temporary canvas
+        tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+        
+        // Compress as low-overhead JPEG
+        const base64Data = tempCanvas.toDataURL("image/jpeg", 0.6).split(",")[1];
+        
+        // Send to WebSocket
+        try {
+          ws.send(JSON.stringify({
+            type: "frame",
+            image: base64Data
+          }));
+        } catch (err) {
+          console.error("Failed to send frame over websocket:", err);
+          isProcessing = false;
+        }
+      }
+      
+      // Keep loop alive via requestAnimationFrame
+      // Throttling: only schedule the next frame grab after a small pause or immediately
+      // The ping-pong flag `isProcessing` protects from overlapping requests
+      setTimeout(() => {
+        requestAnimationFrame(processLoop);
+      }, 33); // Capped at ~30 FPS capture rate
+    }
+
+    // FPS tracker
+    function trackFPS() {
+      const now = performance.now();
+      frameTimes.push(now);
+      
+      // Filter out times older than 1 second
+      frameTimes = frameTimes.filter(t => now - t < 1000);
+      
+      processedFrameCount++;
+      
+      if (now - lastFpsUpdateTime > 500) { // update UI twice a second
+        fpsText.innerText = `${frameTimes.length} FPS`;
+        lastFpsUpdateTime = now;
+      }
+    }
+
+    // Streamlit message listener
+    window.addEventListener("message", async (event) => {
+      // Check if it's the initialization message from Streamlit
+      if (event.data.type === "streamlit:render") {
+        const args = event.data.args;
+        
+        // Save arguments passed from Python
+        wsPort = args.port || 8504;
+        sessionId = args.session_id || "default";
+        
+        // Initial setup
+        const success = await startCamera();
+        if (success) {
+          connectWebSocket();
+        }
+      }
+    });
+
+    // Notify Streamlit that we are ready
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    
+    // Set initial frame size height
+    setFrameHeight();
+    
+    // Clean up when tab is destroyed
+    window.onbeforeunload = () => {
+      stopCamera();
+      if (ws) {
+        ws.close();
+      }
+    };
+  </script>
+</body>
+</html>

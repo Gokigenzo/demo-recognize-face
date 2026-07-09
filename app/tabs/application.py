@@ -11,11 +11,15 @@ import time
 from typing import Dict, List, Optional
 
 import streamlit as st
+import os
+import uuid
+import streamlit.components.v1 as components
 
 from app import ui_helpers as ui
 from ml import config, storage
 from ml.attendance_session import AttendanceSession, SessionStatistics, PredictionResult
 from ml.realtime_engine import RealtimeAttendanceEngine
+from app.tabs.live_camera_server import start_server_background, register_session
 
 def _load_attendance_session() -> AttendanceSession:
     users = storage.load_users()
@@ -91,10 +95,10 @@ def render() -> None:
     # Sidebar parameters
     capture_mode = st.sidebar.radio(
         "Capture mode",
-        ["Photo capture", "Server webcam (continuous)", "Browser fallback"],
+        ["Live Browser Camera (low-lag)", "Photo capture", "Server webcam (continuous)", "Browser fallback"],
         index=0,
         key="app_capture_mode",
-        help="Photo capture is the recommended path for low-quality cameras. It processes one captured image and marks attendance from that shot.",
+        help="Live Browser Camera streams live webcam frames using WebSockets for minimum latency. Photo capture takes a static snapshot.",
     )
     threshold = st.sidebar.slider(
         "Similarity Threshold",
@@ -120,6 +124,10 @@ def render() -> None:
         except RuntimeError as exc:
             st.error(str(exc))
             return
+
+    if "session_uuid" not in st.session_state:
+        st.session_state.session_uuid = str(uuid.uuid4())
+    session_id = st.session_state.session_uuid
 
     session: AttendanceSession = st.session_state.attendance_session
     if _session_needs_refresh(session):
@@ -153,18 +161,37 @@ def render() -> None:
     engine: RealtimeAttendanceEngine = st.session_state.engine
     engine.set_threshold(threshold)
 
+    # Start background WebSocket server and register session
+    ws_port = 8504
+    if capture_mode == "Live Browser Camera (low-lag)":
+        try:
+            ws_port = start_server_background(default_port=8504)
+            register_session(session_id, session, engine)
+        except Exception as exc:
+            st.error(f"Failed to start WebSocket camera server: {exc}")
+
     camera_opened = st.session_state.get("camera_opened", False)
 
     # UI Grid Setup
     dashboard_placeholder = st.empty()
     st.markdown("---")
 
+    # Load custom component
+    parent_dir = os.path.dirname(os.path.abspath(__file__))
+    component_path = os.path.join(parent_dir, "live_camera_component")
+    live_camera_widget = components.declare_component("live_camera_widget", path=component_path)
+
     cols = st.columns([2, 1])
     with cols[0]:
         st.markdown("### Camera")
-        camera_placeholder = st.empty()
-        camera_control_placeholder = st.empty()
-        camera_notice_placeholder = st.empty()
+        if capture_mode == "Live Browser Camera (low-lag)":
+            st.caption("⚠️ Webcam streaming requires a Secure Context (localhost or HTTPS).")
+            # Render the browser camera widget
+            live_camera_widget(port=ws_port, session_id=session_id, key="live_camera_feed")
+        else:
+            camera_placeholder = st.empty()
+            camera_control_placeholder = st.empty()
+            camera_notice_placeholder = st.empty()
 
     with cols[1]:
         st.markdown("### Student Attendance Checklist")
@@ -188,6 +215,9 @@ def render() -> None:
                     st.session_state.camera_opened = False
                     engine.stop()
                     st.rerun()
+        elif capture_mode == "Live Browser Camera (low-lag)":
+            st.success("⚡ Live camera streaming is active.")
+            st.info("Frames are processed on the server via WebSockets.")
         else:
             st.info("Photo capture mode is active.")
 
@@ -269,7 +299,8 @@ def render() -> None:
             time.sleep(0.001)
     else:
         # Static render (Camera stopped or browser mode)
-        stats = stats_helper.get_stats(engine.fps() if camera_opened else 0.0)
+        show_fps = (capture_mode == "Live Browser Camera (low-lag)") or camera_opened
+        stats = stats_helper.get_stats(engine.fps() if show_fps else 0.0)
         with dashboard_placeholder.container():
             _render_dashboard(stats)
 
@@ -320,7 +351,7 @@ def render() -> None:
                     )
                     last_records_count = len(session.records)
             camera_notice_placeholder.info("Use the browser camera capture button above to take a photo.")
-        else:
+        elif capture_mode == "Server webcam (continuous)":
             camera_notice_placeholder.info("Camera stopped. Press Start Camera to begin inference.")
 
     st.markdown("---")
