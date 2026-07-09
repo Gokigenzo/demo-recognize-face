@@ -225,6 +225,9 @@ class RealtimeAttendanceEngine:
 
         detect_start = time.perf_counter()
         faces = detect_faces(processed_frame)
+        if faces:
+            largest_face = max(faces, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
+            faces = [largest_face]
         self._last_faces = faces
         detect_ms = (time.perf_counter() - detect_start) * 1000.0
 
@@ -256,6 +259,11 @@ class RealtimeAttendanceEngine:
             if face_id not in self.state_machines:
                 self.state_machines[face_id] = RecognitionStateMachine(face_id, self.session.confirmation_frames)
             sm = self.state_machines[face_id]
+
+            if result.is_known and result.user_id is not None and result.user_id not in self.session.students:
+                result.is_known = False
+                result.user_id = None
+                result.name = "Unknown"
 
             is_present = False
             if result.is_known and result.user_id is not None:
@@ -342,6 +350,9 @@ class RealtimeAttendanceEngine:
         if should_detect:
             detect_start = time.perf_counter()
             faces = detect_faces(processed_frame)
+            if faces:
+                largest_face = max(faces, key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]))
+                faces = [largest_face]
             self._last_faces = faces
             detect_ms = (time.perf_counter() - detect_start) * 1000.0
         else:
@@ -381,6 +392,11 @@ class RealtimeAttendanceEngine:
             sm = self.state_machines[face_id]
 
             # Check if student is already marked present
+            if result.is_known and result.user_id is not None and result.user_id not in self.session.students:
+                result.is_known = False
+                result.user_id = None
+                result.name = "Unknown"
+
             is_present = False
             if result.is_known and result.user_id is not None:
                 is_present = self.session.students[result.user_id].present

@@ -316,4 +316,113 @@ def render() -> None:
         else:
             camera_notice_placeholder.info("Camera stopped. Press Start Camera to begin inference.")
 
+    st.markdown("---")
+    with st.expander("👤 Manage Student List (CRUD)", expanded=False):
+        users = storage.load_users()
+        crud_mode = st.radio(
+            "Select Action",
+            ["Read List", "Create Student", "Update Student", "Delete Student"],
+            horizontal=True,
+            key="student_crud_mode"
+        )
+        
+        if crud_mode == "Read List":
+            st.markdown("##### Enrolled Student Directory")
+            if not users:
+                st.info("No students enrolled in the database.")
+            else:
+                student_data = []
+                for uid, u in users.items():
+                    created = u.get("created_at", "N/A")
+                    if isinstance(created, str) and "T" in created:
+                        created = created.split("T")[0]
+                    student_data.append({
+                        "Name": u.get("name", uid),
+                        "User ID": uid,
+                        "Created At": created
+                    })
+                st.table(student_data)
+                
+        elif crud_mode == "Create Student":
+            st.markdown("##### Add New Student")
+            with st.form("create_student_form", clear_on_submit=True):
+                new_name = st.text_input("Student Name")
+                submitted = st.form_submit_button("Create & Retrain Model")
+                if submitted:
+                    if not new_name.strip():
+                        st.error("Student Name cannot be empty.")
+                    else:
+                        import re
+                        base_id = re.sub(r'[^a-z0-9_]', '', new_name.strip().lower().replace(" ", "_"))
+                        user_id = base_id
+                        counter = 1
+                        while user_id in users:
+                            user_id = f"{base_id}_{counter}"
+                            counter += 1
+                        
+                        storage.upsert_user(user_id, new_name.strip())
+                        st.success(f"Student '{new_name.strip()}' (ID: {user_id}) created successfully!")
+                        
+                        with st.spinner("Retraining model classifier..."):
+                            try:
+                                from ml import model_builder
+                                existing_clf = storage.load_classifier()
+                                kind = existing_clf.get("kind", "SVM") if existing_clf else "SVM"
+                                
+                                model_builder.train(kind=kind, persist=True)
+                                st.toast("✅ Model retrained successfully with updated students!", icon="⚙️")
+                                
+                                if "engine" in st.session_state and st.session_state.engine is not None:
+                                    st.session_state.engine._classifier_loaded = False
+                                    st.session_state.engine.load_classifier()
+                            except Exception as exc:
+                                st.warning(f"Metadata updated. Classifier was not retrained: {exc}")
+                        
+                        st.rerun()
+                        
+        elif crud_mode == "Update Student":
+            st.markdown("##### Update Student Details")
+            if not users:
+                st.info("No students available to update.")
+            else:
+                student_options = {f"{u.get('name', uid)} ({uid})": uid for uid, u in users.items()}
+                selected_opt = st.selectbox("Select Student", list(student_options.keys()))
+                selected_uid = student_options[selected_opt]
+                
+                with st.form("update_student_form"):
+                    current_name = users[selected_uid].get("name", "")
+                    updated_name = st.text_input("New Name", value=current_name)
+                    submitted = st.form_submit_button("Update Name")
+                    if submitted:
+                        if not updated_name.strip():
+                            st.error("Name cannot be empty.")
+                        else:
+                            users[selected_uid]["name"] = updated_name.strip()
+                            storage.save_users(users)
+                            st.success(f"Student ID '{selected_uid}' name updated to '{updated_name.strip()}'!")
+                            st.rerun()
+                            
+        elif crud_mode == "Delete Student":
+            st.markdown("##### Remove Student")
+            if not users:
+                st.info("No students available to delete.")
+            else:
+                student_options = {f"{u.get('name', uid)} ({uid})": uid for uid, u in users.items()}
+                selected_opt = st.selectbox("Select Student to Delete", list(student_options.keys()))
+                selected_uid = student_options[selected_opt]
+                
+                st.warning(f"Are you sure you want to delete {selected_opt}? This will also delete their face embeddings.")
+                confirm = st.button("Confirm Delete", type="primary")
+                if confirm:
+                    users.pop(selected_uid, None)
+                    storage.save_users(users)
+                    
+                    embeddings_db = storage.load_embeddings_db()
+                    if selected_uid in embeddings_db:
+                        embeddings_db.pop(selected_uid, None)
+                        storage.save_embeddings_db(embeddings_db)
+                        
+                    st.success(f"Student '{selected_opt}' deleted successfully.")
+                    st.rerun()
+
     ui.lesson("This page demonstrates production-style realtime inference without retraining.")

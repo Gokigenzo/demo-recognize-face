@@ -12,9 +12,12 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 from typing import Dict, Optional
+from unittest.mock import patch, MagicMock
 
 import numpy as np
 import pytest
+
+from ml.face_detector import DetectedFace
 
 from ml.attendance_session import (
     AttendanceEvent,
@@ -379,3 +382,75 @@ class TestSessionStatistics:
         stats = SessionStatistics(session)
         result = stats.get_stats(current_fps=0.0)
         assert result["average_recognition_time"] == "150 ms"
+
+
+# ---------------------------------------------------------------------------
+# Largest Face & Deletion Handling (Tab 6 requirement modifications)
+# ---------------------------------------------------------------------------
+class TestApplicationModifications:
+    def _make_session(self) -> AttendanceSession:
+        users = {
+            "u1": {"name": "Alice"},
+            "u2": {"name": "Bob"},
+        }
+        return AttendanceSession(users=users, confirmation_frames=3)
+
+    @patch("ml.realtime_engine.detect_faces")
+    @patch("ml.realtime_engine.embed_face")
+    def test_only_processes_largest_face(self, mock_embed, mock_detect):
+        session = self._make_session()
+        engine = RealtimeAttendanceEngine(session=session)
+        engine._classifier_loaded = True
+        engine._classes = ["u1", "u2"]
+        engine._class_names = ["Alice", "Bob"]
+        
+        crop = np.zeros((112, 112, 3), dtype=np.uint8)
+        face_small = DetectedFace(bbox=(10, 10, 20, 20), crop=crop, confidence=0.9)  # Area: 100
+        face_large = DetectedFace(bbox=(10, 10, 50, 50), crop=crop, confidence=0.8)  # Area: 1600 (largest)
+        face_medium = DetectedFace(bbox=(10, 10, 30, 30), crop=crop, confidence=0.95) # Area: 400
+        
+        mock_detect.return_value = [face_small, face_large, face_medium]
+        mock_embed.return_value = np.zeros(512, dtype=np.float32)
+        
+        engine._predict_identity = MagicMock()
+        from ml.attendance_engine import RecognitionResult
+        engine._predict_identity.return_value = RecognitionResult(
+            user_id="u1", name="Alice", confidence=0.95, is_known=True, candidates=[]
+        )
+        
+        dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        annotated, predictions, annotations = engine.process_photo(dummy_frame)
+        
+        assert len(predictions) == 1
+        assert len(annotations) == 1
+        assert annotations[0].bbox == (10, 10, 50, 50)
+
+    @patch("ml.realtime_engine.detect_faces")
+    @patch("ml.realtime_engine.embed_face")
+    def test_deleted_student_treated_as_unknown(self, mock_embed, mock_detect):
+        session = self._make_session()
+        engine = RealtimeAttendanceEngine(session=session)
+        engine._classifier_loaded = True
+        engine._classes = ["u1", "u2", "deleted_user"]
+        engine._class_names = ["Alice", "Bob", "Deleted User"]
+        
+        crop = np.zeros((112, 112, 3), dtype=np.uint8)
+        face = DetectedFace(bbox=(10, 10, 30, 30), crop=crop, confidence=0.9)
+        mock_detect.return_value = [face]
+        mock_embed.return_value = np.zeros(512, dtype=np.float32)
+        
+        engine._predict_identity = MagicMock()
+        from ml.attendance_engine import RecognitionResult
+        engine._predict_identity.return_value = RecognitionResult(
+            user_id="deleted_user", name="Deleted User", confidence=0.99, is_known=True, candidates=[]
+        )
+        
+        dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        annotated, predictions, annotations = engine.process_photo(dummy_frame)
+        
+        assert len(predictions) == 1
+        pred = predictions[0]
+        assert pred.user_id is None
+        assert pred.name == "Unknown"
+        assert pred.is_known is False
+        assert pred.status == "unknown"
