@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from ml import config, storage
+from ml import config
 from ml.embedder import cosine_similarity
 
 
@@ -39,6 +39,7 @@ def identify(
     The per-user score is the *maximum* cosine similarity across that user's
     stored embeddings (best matching pose / augmentation).
     """
+    from ml import storage
     db = storage.load_embeddings_db()
     users = storage.load_users()
 
@@ -71,6 +72,7 @@ def mark_attendance(result: RecognitionResult) -> Optional[Dict]:
     """Log an attendance row for a *known* recognition result."""
     if not result.is_known or result.user_id is None:
         return None
+    from ml import storage
     return storage.append_attendance(
         result.user_id, result.name, result.confidence, status="present"
     )
@@ -122,6 +124,7 @@ def identify_with_classifier(
     user_id = classes[top_idx]
 
     # Verify using cosine similarity
+    from ml import storage
     db = storage.load_embeddings_db()
     users = storage.load_users()
     user_embs = db.get(user_id, [])

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from ml import config, storage
+from ml import config
 
 
 @dataclass
@@ -73,6 +73,7 @@ def collect_dataset() -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
 
     Only users that actually have at least one embedding are included.
     """
+    from ml import storage
     db = storage.load_embeddings_db()
     users = storage.load_users()
 
@@ -246,6 +247,7 @@ def train(kind: str = "SVM", persist: bool = True, callback=None) -> TrainedMode
     )
 
     if persist:
+        from ml import storage
         storage.save_classifier(
             {
                 "kind": kind,
@@ -295,6 +297,7 @@ def predict(embedding: np.ndarray) -> Optional[Dict[str, object]]:
     Returns a dict with the predicted user_id/name and a per-class probability
     mapping, or ``None`` if no classifier has been trained yet.
     """
+    from ml import storage
     bundle = storage.load_classifier()
     if bundle is None:
         return None

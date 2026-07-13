@@ -11,7 +11,6 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from ml import storage
 from ml.attendance_engine import identify
 
 
@@ -26,6 +25,7 @@ def record_correction(
 
     Returns the feedback entry that was stored.
     """
+    from ml import storage
     storage.add_embeddings(correct_user_id, [np.asarray(embedding, dtype=np.float32)])
     # Ensure the user exists in the metadata store.
     storage.upsert_user(correct_user_id, correct_name)
@@ -53,6 +53,7 @@ def reverify(embedding: np.ndarray, threshold: float) -> Dict:
 
 def improvement_summary() -> Dict:
     """Aggregate feedback stats for the lifecycle dashboard."""
+    from ml import storage
     feedback = storage.load_feedback()
     db = storage.load_embeddings_db()
     total_embeddings = sum(len(v) for v in db.values())
