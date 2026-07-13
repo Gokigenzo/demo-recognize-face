@@ -34,11 +34,11 @@
     - Stores feedback and optionally adds corrected embeddings back into the dataset.
 
   - **Tab 6: Application** (`app/tabs/application.py`)
-    - Production-style realtime attendance page.
-    - Uses continuous inference from either the server webcam or browser fallback.
-    - Tracks faces across frames using IoU-based `FaceTracker`.
-    - Applies `RecognitionStateMachine` per face (Detecting → Verifying → Confirmed / Unknown) to stabilize predictions.
-    - Maintains a live student checklist, real-time event timeline (`EventLogger`), and session dashboard (`SessionStatistics`).
+    - Production-style classroom attendance page.
+    - Supports static photo capture (using browser camera) or image uploads.
+    - Processes the snapshot using the prediction model, mapping recognized faces.
+    - Tracks faces in the snapshot using `FaceTracker`.
+    - Applies confirmation logic and updates the student checklist, event timeline, and session dashboard.
     - Supports export to `attendance.csv` and reset of runtime attendance state.
     - Audio and toast notifications on attendance confirmation.
 
@@ -112,14 +112,13 @@ Files: `app/tabs/deployment.py`, `ml/attendance_engine.py`
 ### 6) Application
 
 Files: `app/tabs/application.py`, `ml/realtime_engine.py`, `ml/attendance_session.py`
-- Production-style realtime attendance application page.
-- Streams continuous frames from webcam or browser fallback.
-- Tracks faces across frames using IoU-based `FaceTracker` to maintain stable face IDs.
-- Each tracked face is managed by a `RecognitionStateMachine` with states: Detecting → Verifying → Confirmed / Unknown.
-- Temporal confirmation requires N consecutive identical predictions before marking attendance.
-- Marks students present only once; duplicates are counted and logged.
-- Real-time dashboard (`SessionStatistics`) shows present/absent/rate/FPS/unknowns/duplicates/avg confidence/avg inference time/elapsed time.
-- Live event timeline (`EventLogger`) shows the last 100 recognition events with color coding.
+- Production-style classroom attendance page.
+- Utilizes static photo capture or image upload to process attendance.
+- Tracks faces detected in the image to maintain stability.
+- Checks face identities against the trained model classifier.
+- Marks students present only once; duplicates are ignored and logged.
+- Dashboard shows present/absent/rate/unknowns/duplicates/avg confidence/avg inference time.
+- Timeline shows recognition events with color coding.
 - Exports runtime attendance as CSV without retraining.
 
 ## Persistence and portability

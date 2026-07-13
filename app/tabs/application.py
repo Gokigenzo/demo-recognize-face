@@ -13,13 +13,11 @@ from typing import Dict, List, Optional
 import streamlit as st
 import os
 import uuid
-import streamlit.components.v1 as components
 
 from app import ui_helpers as ui
 from ml import config, storage
 from ml.attendance_session import AttendanceSession, SessionStatistics, PredictionResult
 from ml.realtime_engine import RealtimeAttendanceEngine
-from app.tabs.live_camera_server import start_server_background, register_session
 
 def _load_attendance_session() -> AttendanceSession:
     users = storage.load_users()
@@ -95,10 +93,10 @@ def render() -> None:
     # Sidebar parameters
     capture_mode = st.sidebar.radio(
         "Capture mode",
-        ["Live Browser Camera (low-lag)", "Photo capture", "Server webcam (continuous)", "Browser fallback"],
+        ["Photo capture", "Upload photo"],
         index=0,
         key="app_capture_mode",
-        help="Live Browser Camera streams live webcam frames using WebSockets for minimum latency. Photo capture takes a static snapshot.",
+        help="Photo capture takes a static snapshot using your webcam. Upload photo allows uploading a classroom image.",
     )
     threshold = st.sidebar.slider(
         "Similarity Threshold",
@@ -127,15 +125,12 @@ def render() -> None:
 
     if "session_uuid" not in st.session_state:
         st.session_state.session_uuid = str(uuid.uuid4())
-    session_id = st.session_state.session_uuid
 
     session: AttendanceSession = st.session_state.attendance_session
     if _session_needs_refresh(session):
         session = _load_attendance_session()
         st.session_state.attendance_session = session
         st.session_state.engine = None
-        st.session_state.app_running = False
-        st.session_state.camera_opened = False
 
     session.confirmation_frames = confirmation_frames
 
@@ -145,8 +140,6 @@ def render() -> None:
             engine = RealtimeAttendanceEngine(session=session, threshold=threshold)
             engine.load_classifier()
             st.session_state.engine = engine
-            st.session_state.app_running = False
-            st.session_state.camera_opened = False
         except Exception as exc:
             LOGGER.exception("Failed to initialize realtime attendance engine.")
             st.error(f"Unable to load the model: {exc}")
@@ -161,71 +154,29 @@ def render() -> None:
     engine: RealtimeAttendanceEngine = st.session_state.engine
     engine.set_threshold(threshold)
 
-    # Start background WebSocket server and register session
-    ws_port = 8504
-    if capture_mode == "Live Browser Camera (low-lag)":
-        try:
-            ws_port = start_server_background(default_port=8504)
-            register_session(session_id, session, engine)
-        except Exception as exc:
-            st.error(f"Failed to start WebSocket camera server: {exc}")
-
-    camera_opened = st.session_state.get("camera_opened", False)
-
     # UI Grid Setup
     dashboard_placeholder = st.empty()
     st.markdown("---")
 
-    # Load custom component
-    parent_dir = os.path.dirname(os.path.abspath(__file__))
-    component_path = os.path.join(parent_dir, "live_camera_component")
-    live_camera_widget = components.declare_component("live_camera_widget", path=component_path)
-
     cols = st.columns([2, 1])
     with cols[0]:
         st.markdown("### Camera")
-        if capture_mode == "Live Browser Camera (low-lag)":
-            st.caption("⚠️ Webcam streaming requires a Secure Context (localhost or HTTPS).")
-            # Render the browser camera widget
-            live_camera_widget(port=ws_port, session_id=session_id, key="live_camera_feed")
-        else:
-            camera_placeholder = st.empty()
-            camera_control_placeholder = st.empty()
-            camera_notice_placeholder = st.empty()
+        camera_placeholder = st.empty()
+        camera_control_placeholder = st.empty()
+        camera_notice_placeholder = st.empty()
 
     with cols[1]:
         st.markdown("### Student Attendance Checklist")
         checklist_placeholder = st.empty()
 
         st.markdown("### Controls")
-        if capture_mode == "Server webcam (continuous)":
-            btn_start, btn_stop = st.columns(2)
-            with btn_start:
-                if st.button("Start Camera", type="primary", use_container_width=True):
-                    try:
-                        engine.open_camera()
-                        st.session_state.camera_opened = True
-                        st.session_state.app_running = True
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Unable to open webcam (camera index 0): {exc}")
-            with btn_stop:
-                if st.button("Stop Camera", type="secondary", use_container_width=True):
-                    st.session_state.app_running = False
-                    st.session_state.camera_opened = False
-                    engine.stop()
-                    st.rerun()
-        elif capture_mode == "Live Browser Camera (low-lag)":
-            st.success("⚡ Live camera streaming is active.")
-            st.info("Frames are processed on the server via WebSockets.")
-        else:
+        if capture_mode == "Photo capture":
             st.info("Photo capture mode is active.")
+        else:
+            st.info("Upload photo mode is active.")
 
         if st.button("Reset Attendance", type="secondary", use_container_width=True):
             session.reset()
-            st.session_state.app_running = False
-            st.session_state.camera_opened = False
-            engine.stop()
             st.rerun()
 
         csv_data = session.export_csv()
@@ -243,116 +194,49 @@ def render() -> None:
 
     sound_placeholder = st.empty()
     last_records_count = len(session.records)
-    last_ui_refresh = 0.0
-    last_dashboard_state = None
-    last_checklist_state = None
 
-    # Run Loop or Static Render
-    if capture_mode == "Server webcam (continuous)" and st.session_state.get("app_running", False) and camera_opened:
-        while st.session_state.get("app_running", False):
-            try:
-                frame = engine.capture_frame()
-            except Exception as exc:
-                st.error(f"Error capturing frame: {exc}")
-                st.session_state.app_running = False
-                st.session_state.camera_opened = False
-                engine.stop()
-                st.rerun()
-                break
+    # Render initial/current dashboard and checklist
+    stats = stats_helper.get_stats(0.0)
+    with dashboard_placeholder.container():
+        _render_dashboard(stats)
 
-            if frame is None:
-                time.sleep(0.001)
-                continue
+    with checklist_placeholder.container():
+        _render_checklist(session)
 
-            if not engine.should_process_frame():
-                time.sleep(0.001)
-                continue
+    # Input source based on mode
+    image = None
+    if capture_mode == "Photo capture":
+        photo = camera_control_placeholder.camera_input("Capture a class photo", key="app_photo_cam")
+        if photo is not None:
+            image = ui.file_to_bgr(photo)
+        camera_notice_placeholder.info("Take a photo to detect and mark attendance from that image.")
+    elif capture_mode == "Upload photo":
+        uploaded = camera_control_placeholder.file_uploader("Upload classroom photo", type=["jpg", "jpeg", "png"], key="app_upload_photo")
+        if uploaded is not None:
+            image = ui.file_to_bgr(uploaded)
+        camera_notice_placeholder.info("Upload a photo to detect and mark attendance from that image.")
 
-            annotated, predictions, annotations = engine.infer_frame(frame)
-            camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
+    # Process and display result if an image is provided
+    if image is not None:
+        annotated, predictions, annotations = engine.process_photo(image)
+        camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
 
-            now = time.time()
-            should_refresh_ui = (now - last_ui_refresh) >= config.REALTIME_UI_REFRESH_SECONDS
-            if should_refresh_ui:
-                stats = stats_helper.get_stats(engine.fps())
-                dashboard_state = stats
-                checklist_state = tuple((s["name"], s["present"], s["confidence"]) for s in session.student_checklist())
-                if dashboard_state != last_dashboard_state:
-                    with dashboard_placeholder.container():
-                        _render_dashboard(stats)
-                    last_dashboard_state = dashboard_state
-                if checklist_state != last_checklist_state:
-                    with checklist_placeholder.container():
-                        _render_checklist(session)
-                    last_checklist_state = checklist_state
-                if len(session.records) > last_records_count:
-                    new_record = session.records[-1]
-                    st.toast(f"✓ {new_record.name} marked as Present", icon="✅")
-                    sound_placeholder.markdown(
-                        f'<audio autoplay src="https://assets.mixkit.co/active_storage/sfx/2869/2869-200.wav" style="display:none;"></audio>',
-                        unsafe_allow_html=True
-                    )
-                    last_records_count = len(session.records)
-            else:
-                sound_placeholder.empty()
-
-            time.sleep(0.001)
-    else:
-        # Static render (Camera stopped or browser mode)
-        show_fps = (capture_mode == "Live Browser Camera (low-lag)") or camera_opened
-        stats = stats_helper.get_stats(engine.fps() if show_fps else 0.0)
+        # Refresh dashboard and checklist after processing
+        stats = stats_helper.get_stats(0.0)
         with dashboard_placeholder.container():
             _render_dashboard(stats)
-
         with checklist_placeholder.container():
             _render_checklist(session)
 
-        if capture_mode == "Photo capture":
-            photo = camera_control_placeholder.camera_input("Capture a class photo", key="app_photo_cam")
-            if photo is not None:
-                frame = ui.file_to_bgr(photo)
-                annotated, predictions, annotations = engine.process_photo(frame)
-                camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
-
-                stats = stats_helper.get_stats(engine.fps())
-                with dashboard_placeholder.container():
-                    _render_dashboard(stats)
-                with checklist_placeholder.container():
-                    _render_checklist(session)
-
-                if len(session.records) > last_records_count:
-                    new_record = session.records[-1]
-                    st.toast(f"✓ {new_record.name} marked as Present", icon="✅")
-                    sound_placeholder.markdown(
-                        f'<audio autoplay src="https://assets.mixkit.co/active_storage/sfx/2869/2869-200.wav" style="display:none;"></audio>',
-                        unsafe_allow_html=True
-                    )
-                    last_records_count = len(session.records)
-            camera_notice_placeholder.info("Take a photo to detect and mark attendance from that image.")
-        elif capture_mode == "Browser fallback":
-            photo = camera_control_placeholder.camera_input("Browser camera capture", key="app_browser_cam")
-            if photo is not None:
-                frame = ui.file_to_bgr(photo)
-                annotated, predictions, annotations = engine.process_photo(frame)
-                camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
-
-                stats = stats_helper.get_stats(engine.fps())
-                with dashboard_placeholder.container():
-                    _render_dashboard(stats)
-                with checklist_placeholder.container():
-                    _render_checklist(session)
-
-                if len(session.records) > last_records_count:
-                    new_record = session.records[-1]
-                    st.toast(f"✓ {new_record.name} marked as Present", icon="✅")
-                    sound_placeholder.markdown(
-                        f'<audio autoplay src="https://assets.mixkit.co/active_storage/sfx/2869/2869-200.wav" style="display:none;"></audio>',
-                        unsafe_allow_html=True
-                    )
-                    last_records_count = len(session.records)
-            camera_notice_placeholder.info("Use the browser camera capture button above to take a photo.")
-        elif capture_mode == "Server webcam (continuous)":
-            camera_notice_placeholder.info("Camera stopped. Press Start Camera to begin inference.")
+        # Play sound and show toast if a student was marked present
+        if len(session.records) > last_records_count:
+            new_record = session.records[-1]
+            st.toast(f"✓ {new_record.name} marked as Present", icon="✅")
+            sound_placeholder.markdown(
+                f'<audio autoplay src="https://assets.mixkit.co/active_storage/sfx/2869/2869-200.wav" style="display:none;"></audio>',
+                unsafe_allow_html=True
+            )
+            last_records_count = len(session.records)
 
     st.markdown("---")
     with st.expander("👤 Manage Student List (CRUD)", expanded=False):

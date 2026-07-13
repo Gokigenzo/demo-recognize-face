@@ -58,7 +58,7 @@ On first run, the app may download weights. If you want to avoid delays during a
 - **Model Training**: train a classifier (SVM/KNN/MLP).
 - **Evaluation**: explore metrics and adjust the confidence/threshold behavior.
 - **Deployment**: use your browser camera to fill an attendance log.
-- **Application**: experience a realtime attendance system with continuous webcam streaming.
+- **Application**: experience a classroom attendance system with photo capture and upload support.
 - **Reset**: **🔄 Reset demo data** to start over.
 
 ---
@@ -75,7 +75,7 @@ On first run, the app may download weights. If you want to avoid delays during a
 ```mermaid
 flowchart LR
     AppPage["Application Page<br/>(app/tabs/application.py)"] -->|calls| RealtimeEngine["Realtime Engine<br/>(ml/realtime_engine.py)"]
-    RealtimeEngine -->|uses| Camera["Webcam / OpenCV<br/>VideoCapture"]
+    RealtimeEngine -->|uses| Camera["Webcam / Image Upload<br/>(st.camera_input / file_uploader)"]
     RealtimeEngine -->|uses| FaceDetector["Face Detection<br/>(ml/face_detector.py)"]
     RealtimeEngine -->|uses| Embedder["Embedding Extraction<br/>(ml/embedder.py)"]
     RealtimeEngine -->|uses| Classifier["Classifier Prediction<br/>(ml/attendance_engine.py)"]
@@ -106,36 +106,35 @@ sequenceDiagram
 
     User->>UI: Open Application tab
     UI->>Session: initialize students from storage
-    UI->>Engine: load classifier + open camera
-    loop every frame
-        Engine->>Engine: capture_frame()
-        Engine->>Detector: detect_faces(frame)
-        Detector-->>Engine: detected faces
-        Engine->>Tracker: update(bounding boxes)
-        Tracker-->>Engine: face IDs (stable across frames)
-        loop each detected face
-            Engine->>Embedder: embed_face(face)
-            Embedder-->>Engine: embedding vector
-            Engine->>Classifier: predict_identity(embedding)
-            Classifier-->>Engine: RecognitionResult (name, confidence)
-            Engine->>SM: update(prediction, is_already_present)
-            SM-->>Engine: state (Detecting / Verifying / Confirmed / Unknown)
-            alt state transitions to Confirmed
-                Engine->>Session: mark_present(user_id, confidence)
-                Engine->>Logger: log_event("✓ Present", green)
-            else state transitions to Unknown
-                Engine->>Logger: log_event("Rejected", red)
-            else duplicate detection
-                Engine->>Logger: log_event("Duplicate Ignored", gray)
-            end
+    UI->>Engine: load classifier
+    User->>UI: Take photo or upload image
+    UI->>Engine: process_photo(image)
+    Engine->>Detector: detect_faces(image)
+    Detector-->>Engine: detected faces
+    Engine->>Tracker: update(bounding boxes)
+    Tracker-->>Engine: face IDs (stable)
+    loop each detected face
+        Engine->>Embedder: embed_face(face)
+        Embedder-->>Engine: embedding vector
+        Engine->>Classifier: predict_identity(embedding)
+        Classifier-->>Engine: RecognitionResult (name, confidence)
+        Engine->>SM: update(prediction, is_already_present)
+        SM-->>Engine: state (Detecting / Verifying / Confirmed / Unknown)
+        alt state transitions to Confirmed
+            Engine->>Session: mark_present(user_id, confidence)
+            Engine->>Logger: log_event("✓ Present", green)
+        else state transitions to Unknown
+            Engine->>Logger: log_event("Rejected", red)
+        else duplicate detection
+            Engine->>Logger: log_event("Duplicate Ignored", gray)
         end
-        Engine->>Session: add_inference_time(ms)
-        Engine-->>UI: annotated frame
-        UI->>Stats: get_stats(fps)
-        Stats-->>UI: dashboard metrics
-        UI->>UI: render video, checklist, timeline, dashboard
     end
-    User->>UI: Stop Camera / Reset / Export CSV
+    Engine->>Session: add_inference_time(ms)
+    Engine-->>UI: annotated image
+    UI->>Stats: get_stats(0.0)
+    Stats-->>UI: dashboard metrics
+    UI->>UI: render annotated image, checklist, timeline, dashboard
+    User->>UI: Reset / Export CSV
 ```
 
 ---
