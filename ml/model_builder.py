@@ -147,7 +147,11 @@ def train(kind: str = "SVM", persist: bool = True, callback=None) -> TrainedMode
 
         # Stratified split to ensure class representation in training curves
         min_class_size = int(np.min(np.bincount(y))) if y.size else 0
-        stratify = y if min_class_size >= 2 else None
+        n_classes = len(class_ids)
+        # Stratify only if every class has at least 2 samples AND the validation set
+        # is large enough to contain at least one sample per class.
+        use_stratify = (min_class_size >= 2) and (int(n_samples * 0.25) >= n_classes)
+        stratify = y if use_stratify else None
 
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, test_size=0.25, random_state=42, stratify=stratify
