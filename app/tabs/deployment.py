@@ -44,7 +44,13 @@ def _run_pipeline(image, threshold: float) -> None:
         return
 
     emb = embed_face(face)
-    result = identify(emb, threshold=threshold)
+    
+    classifier_bundle = storage.load_classifier()
+    if classifier_bundle is not None:
+        from ml.attendance_engine import identify_with_classifier
+        result = identify_with_classifier(emb, classifier_bundle, threshold=threshold)
+    else:
+        result = identify(emb, threshold=threshold)
 
     already_attended = False
     if result.is_known and result.user_id is not None:

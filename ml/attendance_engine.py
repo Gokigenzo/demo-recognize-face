@@ -86,3 +86,66 @@ def recognize_and_log(
     if log and result.is_known:
         mark_attendance(result)
     return result
+
+
+def identify_with_classifier(
+    embedding: np.ndarray,
+    classifier_bundle: Dict[str, Any],
+    threshold: float,
+) -> RecognitionResult:
+    """Identify a face embedding using a trained classifier and verify with similarity.
+
+    Uses the classifier to predict the identity category and verifies the decision
+    region matches the actual target profile by thresholding the cosine similarity score.
+    """
+    classifier = classifier_bundle.get("classifier")
+    classes = list(classifier_bundle.get("classes", []))
+    class_names = list(classifier_bundle.get("class_names", []))
+
+    if not classifier or not classes:
+        return identify(embedding, threshold=threshold)
+
+    x = np.atleast_2d(np.asarray(embedding, dtype=np.float32))
+    try:
+        proba = classifier.predict_proba(x)
+        top_idx = int(np.argmax(proba[0]))
+    except Exception:
+        try:
+            prediction = classifier.predict(x)[0]
+            top_idx = int(prediction)
+        except Exception:
+            return identify(embedding, threshold=threshold)
+
+    if top_idx < 0 or top_idx >= len(classes):
+        return identify(embedding, threshold=threshold)
+
+    user_id = classes[top_idx]
+
+    # Verify using cosine similarity
+    db = storage.load_embeddings_db()
+    users = storage.load_users()
+    user_embs = db.get(user_id, [])
+    if user_embs:
+        similarity = max(cosine_similarity(embedding, e) for e in user_embs)
+    else:
+        similarity = 0.0
+
+    is_known = similarity >= threshold
+    name = users.get(user_id, {}).get("name", user_id)
+
+    # Calculate top candidates for explainability UI
+    scored = []
+    for uid, embeddings in db.items():
+        if not embeddings:
+            continue
+        best = max(cosine_similarity(embedding, e) for e in embeddings)
+        scored.append((uid, users.get(uid, {}).get("name", uid), best))
+    scored.sort(key=lambda t: t[2], reverse=True)
+
+    return RecognitionResult(
+        user_id=user_id if is_known else None,
+        name=name if is_known else "Unknown",
+        confidence=similarity,
+        is_known=is_known,
+        candidates=scored[:5],
+    )

@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 from ml import config, storage
-from ml.attendance_engine import RecognitionResult, identify
+from ml.attendance_engine import RecognitionResult, identify, identify_with_classifier
 from ml.attendance_session import AttendanceRecord, AttendanceSession, PredictionResult, RecognitionStateMachine
 from ml.embedder import embed_face
 from ml.face_detector import detect_faces
@@ -129,33 +129,12 @@ class RealtimeAttendanceEngine:
         if self._classifier is None:
             return identify(embedding, threshold=self.threshold)
 
-        x = np.atleast_2d(np.asarray(embedding, dtype=np.float32))
-        try:
-            proba = self._classifier.predict_proba(x)
-            top_idx = int(np.argmax(proba[0]))
-            confidence = float(proba[0][top_idx])
-        except Exception:
-            try:
-                prediction = self._classifier.predict(x)[0]
-                top_idx = int(prediction)
-                confidence = 1.0
-            except Exception:
-                return identify(embedding, threshold=self.threshold)
-
-        if top_idx < 0 or top_idx >= len(self._classes):
-            return identify(embedding, threshold=self.threshold)
-
-        user_id = self._classes[top_idx]
-        name = self._class_names[top_idx]
-        is_known = confidence >= self.threshold
-        candidates = [(user_id, name, confidence)]
-        return RecognitionResult(
-            user_id=user_id if is_known else None,
-            name=name if is_known else "Unknown",
-            confidence=confidence,
-            is_known=is_known,
-            candidates=candidates,
-        )
+        bundle = {
+            "classifier": self._classifier,
+            "classes": self._classes,
+            "class_names": self._class_names,
+        }
+        return identify_with_classifier(embedding, bundle, threshold=self.threshold)
 
     def open_camera(self, index: int = 0) -> None:
         if self._capture is not None and self._capture.isOpened():
