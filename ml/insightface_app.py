@@ -166,7 +166,11 @@ def _try_load() -> Optional[object]:
 
         from insightface.app import FaceAnalysis
 
-        app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+        app = FaceAnalysis(
+            name="buffalo_l",
+            allowed_modules=["detection", "recognition"],
+            providers=["CPUExecutionProvider"]
+        )
         app.prepare(ctx_id=-1, det_size=config.DET_SIZE)
         return app
     except Exception:  # noqa: BLE001 - any failure means "use fallback"
