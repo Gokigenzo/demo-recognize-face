@@ -19,6 +19,22 @@ _lock = threading.Lock()
 def _try_load() -> Optional[object]:
     """Attempt to construct and prepare a FaceAnalysis app."""
     try:
+        # Monkey patch ONNX Runtime to force single-threaded execution and prevent segfaults
+        try:
+            import onnxruntime as ort
+            original_init = ort.InferenceSession.__init__
+            def patched_init(self, model_path, sess_options=None, *args, **kwargs):
+                if sess_options is None:
+                    sess_options = ort.SessionOptions()
+                sess_options.intra_op_num_threads = 1
+                sess_options.inter_op_num_threads = 1
+                sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+                original_init(self, model_path, sess_options, *args, **kwargs)
+            ort.InferenceSession.__init__ = patched_init
+        except Exception as patch_err:
+            import logging
+            logging.warning("Failed to monkey patch onnxruntime: %s", patch_err)
+
         from insightface.app import FaceAnalysis
 
         app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])

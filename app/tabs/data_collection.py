@@ -55,17 +55,17 @@ def render(show_hero: bool = True) -> None:
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown("**Original**")
-        st.image(ui.bgr_to_rgb(image), use_container_width=True)
+        st.image(ui.bgr_to_rgb(image), width="stretch")
     if face is None:
         st.warning("😕 No face detected. Try better lighting or face the camera.")
         ui.lesson("Machine Learning learns from data.")
         return
     with c2:
         st.markdown("**Detected**")
-        st.image(ui.bgr_to_rgb(draw_detection(image, face, "face")), use_container_width=True)
+        st.image(ui.bgr_to_rgb(draw_detection(image, face, "face")), width="stretch")
     with c3:
         st.markdown("**Cropped**")
-        st.image(ui.bgr_to_rgb(face.crop), use_container_width=True)
+        st.image(ui.bgr_to_rgb(face.crop), width="stretch")
 
     st.markdown(
         ui.pill(f"Detection confidence: {face.confidence:.2f}", "ok"),

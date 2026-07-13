@@ -8,6 +8,16 @@ Run:
 """
 from __future__ import annotations
 
+import os
+
+# Restrict multi-threading to 1 thread for stable execution in resource-constrained environments
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["ONNXRUNTIME_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import streamlit as st
 
 from app import ui_helpers as ui
@@ -62,7 +72,7 @@ def sidebar() -> str:
             data=storage.export_bundle(),
             file_name="ml_demo_bundle.pkl",
             mime="application/octet-stream",
-            use_container_width=True,
+            width="stretch",
             help="Download users, embeddings, and the trained model as one file.",
         )
         uploaded = st.file_uploader(
@@ -87,7 +97,7 @@ def sidebar() -> str:
             st.session_state["_imported_bundle"] = False
 
         st.divider()
-        if st.button("🚀 Load Sample Dataset", use_container_width=True, help="Load a pre-populated dataset of historical scientists (Ada Lovelace, Alan Turing, Grace Hopper) with a trained SVM classifier"):
+        if st.button("🚀 Load Sample Dataset", width="stretch", help="Load a pre-populated dataset of historical scientists (Ada Lovelace, Alan Turing, Grace Hopper) with a trained SVM classifier"):
             try:
                 import os
                 sample_path = os.path.join(config.DATASETS_DIR, "sample_bundle.pkl")
@@ -101,7 +111,7 @@ def sidebar() -> str:
             except Exception as exc:
                 st.error(f"Failed to load sample dataset: {exc}")
 
-        if st.button("🔄 Reset demo data", use_container_width=True):
+        if st.button("🔄 Reset demo data", width="stretch"):
             storage.reset_all()
             st.session_state["_imported_bundle"] = False
             st.success("Demo reset. Reload to start fresh.")

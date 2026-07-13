@@ -58,7 +58,7 @@ def _confusion_heatmap(result) -> None:
         showscale=False,
     ))
     fig.update_layout(title="Confusion Matrix", height=320, margin=dict(t=40))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _tradeoff_curve(samples) -> None:
@@ -73,7 +73,7 @@ def _tradeoff_curve(samples) -> None:
         xaxis_title="Similarity threshold", yaxis_title="Score",
         height=380, yaxis_range=[0, 1.05],
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render() -> None:

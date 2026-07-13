@@ -175,7 +175,7 @@ def render() -> None:
         else:
             st.info("Upload photo mode is active.")
 
-        if st.button("Reset Attendance", type="secondary", use_container_width=True):
+        if st.button("Reset Attendance", type="secondary", width="stretch"):
             session.reset()
             st.rerun()
 
@@ -186,7 +186,7 @@ def render() -> None:
             file_name="attendance.csv",
             mime="text/csv",
             key="download_attendance",
-            use_container_width=True,
+            width="stretch",
         )
 
     # Render Dashboard & Checklist Placeholders
@@ -219,7 +219,7 @@ def render() -> None:
     # Process and display result if an image is provided
     if image is not None:
         annotated, predictions, annotations = engine.process_photo(image)
-        camera_placeholder.image(ui.bgr_to_rgb(annotated), use_container_width=True)
+        camera_placeholder.image(ui.bgr_to_rgb(annotated), width="stretch")
 
         # Refresh dashboard and checklist after processing
         stats = stats_helper.get_stats(0.0)

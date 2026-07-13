@@ -79,7 +79,7 @@ def _boundary_plot(model) -> None:
         legend_title="Identity",
         margin=dict(t=50),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption(
         "Shaded regions are what the classifier predicts for any point in space; "
         "dots are the real training samples. The borders between colors are the "
@@ -107,7 +107,7 @@ def render() -> None:
         )
     with c2:
         st.write("")
-        train_clicked = st.button("🚀 Train model", use_container_width=True, type="primary")
+        train_clicked = st.button("🚀 Train model", width="stretch", type="primary")
 
     if train_clicked:
         # Placeholders for dynamic status & charts
@@ -192,7 +192,7 @@ def render() -> None:
                 title_text="Accuracy", row=1, col=2, range=[0, 1.05]
             )
 
-            chart_placeholder.plotly_chart(fig, use_container_width=True)
+            chart_placeholder.plotly_chart(fig, width="stretch")
             import time
 
             time.sleep(0.04)
@@ -282,7 +282,7 @@ def render() -> None:
         fig.update_xaxes(title_text="Epoch", row=1, col=2)
         fig.update_yaxes(title_text="Loss", row=1, col=1)
         fig.update_yaxes(title_text="Accuracy", row=1, col=2, range=[0, 1.05])
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.info(
             "💡 **Learning Curve Insights:**\n"
             "- **Loss Curve:** Shows how the network minimizes errors via backpropagation. Ideally, it decreases smoothly.\n"

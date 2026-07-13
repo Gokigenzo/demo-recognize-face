@@ -56,7 +56,7 @@ def _run_pipeline(image, threshold: float) -> None:
 
     c1, c2 = st.columns([2, 1])
     with c1:
-        st.image(ui.bgr_to_rgb(annotated), use_container_width=True)
+        st.image(ui.bgr_to_rgb(annotated), width="stretch")
     with c2:
         kind = "ok" if result.is_known else "bad"
         st.markdown(ui.pill("PRESENT" if result.is_known else "UNKNOWN", kind), unsafe_allow_html=True)
@@ -66,7 +66,7 @@ def _run_pipeline(image, threshold: float) -> None:
             st.markdown("**Top candidates**")
             st.dataframe(
                 [{"Name": n, "Score": f"{s:.2f}"} for _id, n, s in result.candidates],
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
     if result.is_known:
         if already_attended:
@@ -112,6 +112,6 @@ def render() -> None:
     rows = storage.load_attendance()
     if rows:
         st.markdown("#### 🗒️ Attendance log")
-        st.dataframe(rows[::-1], use_container_width=True, hide_index=True)
+        st.dataframe(rows[::-1], width="stretch", hide_index=True)
 
     ui.lesson("This is where ML creates business value.")

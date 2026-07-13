@@ -32,13 +32,13 @@ def _live_embedding_demo() -> None:
     emb = embed_face(face)
     c1, c2 = st.columns([1, 2])
     with c1:
-        st.image(ui.bgr_to_rgb(face.crop), caption="Face", use_container_width=True)
+        st.image(ui.bgr_to_rgb(face.crop), caption="Face", width="stretch")
     with c2:
         st.markdown(f"**{config.EMBEDDING_DIM}-D Identity Vector** (first 16 of {config.EMBEDDING_DIM})")
         preview = np.asarray(emb[:16]).reshape(1, -1)
         fig = px.imshow(preview, color_continuous_scale="Blues", aspect="auto")
         fig.update_layout(height=120, margin=dict(l=0, r=0, t=10, b=0), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def _cluster_plot() -> None:
@@ -67,7 +67,7 @@ def _cluster_plot() -> None:
         xaxis_title="PC1", yaxis_title="PC2", height=460,
         legend_title="Identity",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption("Tight, well-separated clusters → easier, more reliable recognition.")
 
 

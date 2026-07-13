@@ -105,7 +105,7 @@ def render() -> None:
 
     c1, c2 = st.columns([2, 1])
     with c1:
-        st.image(ui.bgr_to_rgb(annotated), use_container_width=True, caption="Preview (detection + decision)")
+        st.image(ui.bgr_to_rgb(annotated), width="stretch", caption="Preview (detection + decision)")
     with c2:
         kind = "ok" if result.is_known else "bad"
         st.markdown(ui.pill("PREDICTED: " + result.name, kind), unsafe_allow_html=True)
@@ -149,7 +149,7 @@ def render() -> None:
         placeholder="e.g., new hairstyle, different lighting, wrong threshold…",
     )
 
-    if st.button("💾 Save correction & add embedding", type="primary", use_container_width=True):
+    if st.button("💾 Save correction & add embedding", type="primary", width="stretch"):
         if correct_user_id == "__unknown__":
             if enroll_new:
                 if not new_name.strip():
@@ -204,7 +204,7 @@ def render() -> None:
     recent = summary.get("recent") or []
     if recent:
         st.markdown("#### Recent feedback")
-        st.dataframe(recent, use_container_width=True, hide_index=True)
+        st.dataframe(recent, width="stretch", hide_index=True)
     else:
         st.caption("No feedback recorded yet. Save one correction to see entries here.")
 
