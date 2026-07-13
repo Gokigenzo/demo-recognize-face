@@ -117,3 +117,13 @@ CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance(student_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_session ON attendance(session_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_time ON attendance(timestamp);
 CREATE INDEX IF NOT EXISTS idx_feedback_student ON monitoring_feedback(student_id);
+
+-- 8. Supabase Storage RLS Policies (For 'models' and 'attendance' buckets)
+-- These allow the client-side anonymous key to upload and access pickles & CSV reports.
+CREATE POLICY "Allow public upload to models" ON storage.objects FOR INSERT TO anon, authenticated WITH CHECK (bucket_id = 'models');
+CREATE POLICY "Allow public select from models" ON storage.objects FOR SELECT TO anon, authenticated USING (bucket_id = 'models');
+CREATE POLICY "Allow public update of models" ON storage.objects FOR UPDATE TO anon, authenticated USING (bucket_id = 'models') WITH CHECK (bucket_id = 'models');
+
+CREATE POLICY "Allow public upload to attendance" ON storage.objects FOR INSERT TO anon, authenticated WITH CHECK (bucket_id = 'attendance');
+CREATE POLICY "Allow public select from attendance" ON storage.objects FOR SELECT TO anon, authenticated USING (bucket_id = 'attendance');
+CREATE POLICY "Allow public update of attendance" ON storage.objects FOR UPDATE TO anon, authenticated USING (bucket_id = 'attendance') WITH CHECK (bucket_id = 'attendance');
