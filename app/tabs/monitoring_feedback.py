@@ -59,7 +59,8 @@ def _capture_image_for_feedback() -> Optional[np.ndarray]:
 def render() -> None:
     ui.hero("5 · Monitoring & Feedback", "Live systems learn from mistakes." )
 
-    pass
+    if "feedback_toast" in st.session_state:
+        st.toast(st.session_state.pop("feedback_toast"), icon="👤")
 
     ui.pipeline([
 
@@ -163,8 +164,7 @@ def render() -> None:
                     predicted_name=result.name,
                     note=note,
                 )
-                st.success(f"Stored feedback & enrolled **{new_name.strip()}** with a new embedding! ✓")
-                st.balloons()
+                st.session_state["feedback_toast"] = f"Enrolled **{new_name.strip()}** successfully! 🎉"
                 st.rerun()
             else:
                 st.info("Marked as Unknown — no embedding added to a specific identity.")

@@ -78,7 +78,7 @@ def render(show_hero: bool = True) -> None:
         storage.upsert_user(user_id, name.strip())
         storage.add_embeddings(user_id, [embedding])
         st.success(f"Stored **{pose}** pose for **{name}** ✓")
-        st.balloons()
+        st.toast(f"Registered **{pose}** pose for **{name}**! 🎉", icon="👤")
 
     ui.lesson("Machine Learning learns from data.")
 
